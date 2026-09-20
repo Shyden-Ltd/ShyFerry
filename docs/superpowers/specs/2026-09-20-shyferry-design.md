@@ -399,6 +399,7 @@ stopped being right.
 | INV-6 | Dry run and real run produce an identical plan and share one code path | Test compares plans; effects are gated at a single boundary | Diverge the dry-run path; test must go red |
 | INV-7 | Items already in the source's trash are never enumerated, transferred or counted | Planner query asserts `trashed=false` on Drive and the equivalent on Graph; integration test trashes a file and asserts it is absent from the plan | Remove the filter; test must go red |
 | INV-8 | ShyFerry contacts the configured providers and nothing else | A request recorder asserts every host contacted is one the active providers declare in their capabilities. The allowed set is **derived** from the loaded providers, never hand-listed. The test carries a liveness control: a deliberate request to a known host must be observed by the recorder in the same test, so a recorder that is not wired up fails rather than reporting an empty set | Add a call to an unrelated host; test must go red. Separately, detach the recorder; the liveness control must go red |
+| INV-14 | An account type outside the supported set is refused at authentication, never partially supported | `account_info()` reports the account type, and anything outside the set stops with an explanation naming the limitation | Accept an unsupported account type; the refusal test must go red |
 | INV-13 | Only items the user owns are enumerated, transferred or recycled | The Drive query carries `'me' in owners` beside `trashed=false`. An integration test places a shared-with-me file within the transfer root and asserts it is absent from the plan | Remove the ownership term from the query; the shared-with-me test must go red |
 | INV-12 | A transfer whose destination lies inside its own source, on the same account, is refused before any byte moves | Pre-flight compares account identity and tests path containment in both directions | Remove the containment check from pre-flight; the nested-destination test must go red |
 | INV-10 | No credential material reaches logs, error output or reports | A redacting formatter is the only logging path. Tests push access tokens, client secrets and signed resumable-upload URLs through every reporting surface and assert none appears | Log a raw token; test must go red |
@@ -406,8 +407,16 @@ stopped being right.
 | INV-9 | Nothing is recycled whose source has changed since it was transferred (R-04) | OneDrive: the recorded eTag is sent as `if-match`, so the server refuses a stale deletion with 412 and the check is atomic. Drive: `headRevisionId` is re-read and compared immediately before trashing, since Drive accepts no precondition (R-06) | Remove the `if-match` header from the Graph path and skip the `headRevisionId` comparison on the Drive path; the source-changed test must go red for each |
 
 Ownership: INV-1 to INV-6 and INV-9 belong to S-14, INV-7 to S-09, INV-8 and
-INV-10 to S-16, INV-11 to S-05, INV-12 to S-15, and INV-13 to S-09. An
-invariant with no owning story is an intention rather than a control.
+INV-10 to S-16, INV-11 to S-05, INV-12 to S-15, INV-13 to S-09, and INV-14
+to S-05. An invariant with no owning story is an intention rather than a
+control.
+
+INV-14 guards the worst shape a deferred scope can take: not failure, but
+partial success. A business account would authenticate, and most of the tool
+would work - until enumeration missed every Shared Drive and SharePoint
+library, and the run reported completion over an incomplete set. An account
+we have not tested is refused with an explanation, because "it mostly
+worked" is the outcome that loses data when a purge follows.
 
 INV-13 is INV-7's twin. Section 1.2 puts "Shared with me" content out of
 scope, and a scope statement enforces nothing: Drive's `files.list` returns
@@ -642,7 +651,10 @@ failure of the harness.
 Journeys: first-run credential setup; plan and dry run; full transfer; native
 document conversion under each policy; verification; purge by separate pass;
 purge by `--delete-after-each`; interrupted transfer and resume; a file
-modified at source mid-run; destination quota exhaustion (R-05); throttling.
+modified at source mid-run; a file modified between transfer and purge; a
+destination nested inside its source; a shared-with-me file inside the
+transfer root; an unsupported account type; destination quota exhaustion
+(R-05); throttling.
 
 Free-tier storage ceilings (5 GB OneDrive, 15 GB Drive) bound these fixtures.
 Large-file and resume journeys therefore target the mechanism - chunk
@@ -675,6 +687,10 @@ three are load-bearing for this product.
   pipeline is a precondition for that sign-off, never a substitute for it.
 - Installs in CI are hash-verified from the lockfile. A tool that handles
   other people's credentials does not resolve dependencies loosely.
+- The specification's own integrity checker runs in CI beside the test
+  suite. It found a command documented nowhere and five decisions cited
+  nowhere while this design was being written; a document that drifts out of
+  agreement with itself misleads exactly the people it was written for.
 - Branches: `main` and `develop`. Nothing merges to `main` directly. Every
   ticket gets a branch, which merges to `develop`.
 - `uv` for environment and lockfile (D3). Python 3.12 pinned for development;
