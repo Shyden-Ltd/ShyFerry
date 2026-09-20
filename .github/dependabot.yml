@@ -1,0 +1,36 @@
+version: 2
+
+# Version updates are NOT inheritable organisation-wide - only security updates
+# are - so this file is per-repository and has to be created deliberately.
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # A pull request opened against a protected main either cannot merge or
+    # bypasses the dev gate.
+    target-branch: "develop"
+    open-pull-requests-limit: 5
+    groups:
+      patch-updates:
+        update-types: ["patch"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    target-branch: "develop"
+    open-pull-requests-limit: 5
+    groups:
+      # Dependabot treats actions/cache, actions/cache/restore and
+      # actions/cache/save as separate dependencies, so ungrouped they arrive
+      # as separate pull requests, each moving one SHA while its siblings lag.
+      # This group must sit ABOVE any catch-all: Dependabot assigns a
+      # dependency to the first matching group and stops.
+      same-repository-sub-paths:
+        patterns:
+          - "actions/cache*"
+          - "actions/upload-artifact*"
+          - "actions/download-artifact*"
+      patch-updates:
+        update-types: ["patch"]
