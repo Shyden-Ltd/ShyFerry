@@ -655,6 +655,10 @@ carries the source and destination identifiers, the size, the hashes
 computed and reported, and the **source revision token** captured at
 transfer time, without which INV-9 cannot be evaluated at purge time.
 
+The first record of every manifest is the run's **effective configuration**:
+the merged result of all four layers, the locators, and the resolved account
+aliases. It is written once, at the start, and never rewritten.
+
 A manifest is an inventory of the user's entire file tree in plain text:
 names, paths, sizes and hashes. That is sensitive on its own, independently
 of the files it describes. It is written with owner-only permissions, its
@@ -676,7 +680,13 @@ therefore cause a purge to do less, and can never cause it to do more.
 ### 10.4 Resume
 
 `--resume RUN_ID` replays the manifest, skips the transfer of items already
-verified, and re-plans the remainder. An item that is verified but not yet
+verified, and re-plans the remainder **under the configuration recorded in
+the manifest**, not whatever the config file says today. A user who changes
+the native-document policy and then resumes would otherwise end up with half
+their documents as `.docx` and half as PDF, inside one run that reports
+itself complete. If the current configuration differs, ShyFerry says which
+keys differ and declines: applying different rules to different parts of one
+transfer is a new run, not a continuation of an old one. An item that is verified but not yet
 recycled is not finished: under `--delete-after-each`, an interruption
 between verification and deletion leaves work outstanding, and resume
 completes the deletion rather than skipping the item as done.
