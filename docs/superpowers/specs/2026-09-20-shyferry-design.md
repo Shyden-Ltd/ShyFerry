@@ -641,8 +641,12 @@ every story.
   forms (R-03).
 - Conformance tests: one suite, run against every provider.
 - Integration journeys against real accounts.
-- Mutation testing over the safety-critical modules: `verify`, `purge`,
-  `hashing`, `manifest`.
+- Mutation testing over every module that carries an invariant from section
+  6.4 - today `verify`, `purge`, `hashing`, `manifest`, `preflight`,
+  `planner`, `auth` and the CLI reporting path. The scope is **derived from
+  the invariant table's ownership**, not kept as a separate list beside it. A
+  hand-maintained list would have covered four modules while six of the
+  fourteen invariants lived elsewhere, and nothing would have said so.
 
 ### 11.2 The local provider is not a mock
 
@@ -656,15 +660,19 @@ cannot implement either.
 ### 11.3 The conformance suite
 
 Every provider passes the same suite: round-trip a file and compare bytes,
-enumerate a nested tree, create and detect folders including empty ones,
+round-trip a zero-byte file and record whether a hash is reported at all
+(section 5.3), enumerate a nested tree, create and detect folders including
+empty ones, race N workers at one folder path and assert a single identifier,
 reject forbidden names according to declared capabilities, report hashes
 matching locally computed values, recycle an item and confirm it leaves the
-listing, and refuse operations the provider declares it cannot do.
+listing, refuse a recycle whose `expected_revision` is stale, and refuse
+operations the provider declares it cannot do.
 
 ### 11.4 Journeys against real accounts
 
-Two account types in MVP: personal Google Drive, personal OneDrive. Both
-directions. Credentials come from CI secrets; a missing credential produces
+Two providers in MVP, a personal account on each: Google Drive and OneDrive.
+Both directions. ("Account type" is reserved for the personal-against-
+business distinction INV-14 enforces, and is not used loosely here.) Credentials come from CI secrets; a missing credential produces
 an itemised, loud skip naming each journey not run. A silent pass is a
 failure of the harness.
 
@@ -689,7 +697,12 @@ migration" is consequently an untested claim and will not be made.
   module, which yields exact COMMENT and STRING tokens from the real grammar.
   A regular expression cannot distinguish a call from the same text inside a
   docstring, and the guards in section 6.4 are worthless if it cannot.
-- Every guard is mutation-verified in both directions before it is trusted.
+- Every guard is mutation-verified in both directions before it is trusted,
+  and the two directions are stated rather than implied: the guard goes
+  **red** when the control it protects is removed, and **green** on the
+  unmodified tree. A guard proven only in the first direction may be failing
+  for an unrelated reason; one proven only in the second may be asserting
+  nothing at all.
 
 ### 11.6 Platform matrix
 
