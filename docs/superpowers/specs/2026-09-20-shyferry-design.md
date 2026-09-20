@@ -448,12 +448,18 @@ Policy is set per type in configuration (D7), with these values:
 |---|---|---|
 | `office` (default) | Docs to `.docx`, Sheets to `.xlsx`, Slides to `.pptx`, Drawings to `.png` | Keeps documents editable at the destination, which is usually the entire point of migrating |
 | `pdf` | Every native type to PDF | Exact visual fidelity, at the cost of editability |
-| `both` | The Office file and a PDF alongside | For irreplaceable documents; doubles the file count |
+| `both` | The Office file and a PDF alongside | For irreplaceable documents; doubles the file count, and the source item counts as transferred only when both outputs exist |
 | `skip` | Left in place, reported | No conversion risk; the user moves them by hand |
 
 `shyferry explain native-files` prints this table with its trade-offs, and
 the first interactive run shows it before asking. The default is applied
 without prompting in non-interactive use.
+
+`both` is the one policy where a single source item produces two destination
+files, so the manifest holds one record per output sharing a source
+identifier, and the item is transferred only once every one of its outputs
+is present. A model that assumed one destination per source would report
+success with the PDF written and the `.docx` missing.
 
 Conversion means the destination's bytes differ from the source's by design,
 so converted items are `unverifiable` in the sense of section 5.3 and are
@@ -474,7 +480,10 @@ with no checksum, making every uploaded file unverifiable.
 Layers, each overriding the one before:
 
 1. Built-in defaults
-2. `~/.config/shyferry/config.toml` (XDG, platform-appropriate)
+2. A configuration file at the location `platformdirs` resolves for this
+   application on the running platform, which is `~/.config/shyferry/` on
+   Linux and different elsewhere. The path is reported by
+   `shyferry auth status` rather than assumed by the user
 3. Environment variables
 4. Command-line flags
 
@@ -517,9 +526,20 @@ shyferry runs list                  past runs and their outcomes
 shyferry runs prune                 discard manifests past the retention window
 ```
 
+Source and destination are written as `<provider>:<path>` - `gdrive:/`,
+`onedrive:/Photos`, `local:~/Backup`. The prefix is the name the provider
+registers under, so a third-party provider is addressed exactly like a
+built-in one, and a bare path with no prefix means `local:`. A locator parses
+to a provider, an account and a path, which is precisely the triple INV-12
+compares for containment.
+
 Exit codes are meaningful and documented: 0 success, 1 partial with
 failures, 2 configuration or credential error, 3 refused by a safety gate.
-`--json` produces machine-readable output on every command that reports.
+A run that completes but leaves items unpurged for safety reasons is a
+success and exits 0, with every refusal itemised in the report: those
+refusals are the tool working, not failing. Exit 3 is for a gate that
+refused the whole operation. `--json` produces machine-readable output on
+every command that reports.
 
 Output conventions: machine-readable output goes to stdout and everything
 else to stderr, so `--json` stays parseable when piped. Progress rendering
