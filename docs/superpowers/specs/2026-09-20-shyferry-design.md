@@ -346,7 +346,10 @@ enforcement in section 6.4 is mechanical rather than editorial.
   asserted identically across the CI matrix. The provider excludes that
   directory from its own enumeration unconditionally; leaving it to a
   user-supplied filter would mean a second run over the same root ferries
-  previously recycled files back again.
+  previously recycled files back again. Its revision token, which INV-9
+  requires of every provider, is the file's size and modification time -
+  what a filesystem offers - so the conformance suite's stale-revision test
+  runs against `local` exactly as it does against the clouds.
 
 Both cloud recycle bins retain items for a provider-defined period, during
 which the user can restore them without ShyFerry. The exact period varies by
@@ -368,7 +371,8 @@ window between the two (R-06).
 
 - `shyferry purge-source RUN_ID` (default): a separate command, run after a
   transfer. It reads the manifest as a worklist, re-checks each item against
-  the live destination, and recycles only those that pass.
+  the live destination, confirms the source is unchanged since transfer
+  (INV-9), and recycles only those that pass both.
 - `shyferry run --delete-after-each` (opt-in): recycles each source file
   immediately after that file's own upload has been verified. Intended for
   users whose source account is too full to complete a transfer otherwise.
@@ -387,6 +391,16 @@ destination after the upload completes, never reusing the upload response. A
 provider that acknowledges an upload it did not persist must not be able to
 authorise the deletion of the original, and an invariant satisfied by reading
 back the same response that claimed success is satisfied in name only.
+
+Folders need their own rule, and it is the part of "remove everything from
+the source" that a file-by-file rule cannot cover. A source folder is
+recycled only when it is empty **at the moment of the check** and every item
+it ever held was transferred, verified and recycled. A folder still holding
+anything - an unverifiable file, an item the user does not own, something
+added after the run began - is left in place and reported. Recycling a
+folder because our records say it ought to be empty deletes whatever is
+actually inside it, which is the one mistake in this design that the recycle
+bin would not fully undo: the user would have to notice it had happened.
 
 Neither can reach a permanent delete, because no code path can express one.
 
