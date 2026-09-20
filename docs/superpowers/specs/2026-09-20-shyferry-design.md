@@ -99,6 +99,7 @@ shyferry/
     provider.py     StorageProvider protocol and ProviderCapabilities
     registry.py     entry-point discovery of providers
     planner.py      enumeration, filtering, naming, collision resolution
+    preflight.py    destination quota and capability checks, before any byte moves
     engine.py       execution: streaming, concurrency, retry, progress
     hashing.py      streaming multi-hasher, including quickXorHash
     verify.py       hash algorithm negotiation and comparison
@@ -183,6 +184,13 @@ able to move a library far larger than that.
 - Each chunk is fed to the multi-hasher (section 5) as it passes.
 - Folders are created before their contents. Empty folders are transferred:
   an empty folder is content.
+- Folder creation is single-flight, cached by destination path. Google Drive
+  permits two folders with the same name in the same parent, so two workers
+  creating the same path concurrently would produce two folders and silently
+  split the tree beneath them. One creation per path, shared by all workers,
+  is therefore a correctness requirement and not an optimisation. Proven by a
+  conformance test that races N workers at one nested path and asserts a
+  single folder identifier results. See R-02.
 - Transport is `httpx` with an async, bounded worker pool.
 
 ---
@@ -263,7 +271,10 @@ enforcement in section 6.4 is mechanical rather than editorial.
 - `local`: moves the file into a `.shyferry-trash` directory at the root of
   the transfer, preserving relative path. The local provider does not use the
   desktop trash, because that behaviour differs per platform and cannot be
-  asserted identically across the CI matrix.
+  asserted identically across the CI matrix. The provider excludes that
+  directory from its own enumeration unconditionally; leaving it to a
+  user-supplied filter would mean a second run over the same root ferries
+  previously recycled files back again.
 
 Both cloud recycle bins retain items for a provider-defined period, typically
 around 30 days, during which the user can restore them without ShyFerry.
@@ -278,6 +289,12 @@ around 30 days, during which the user can restore them without ShyFerry.
   immediately after that file's own upload has been verified. Intended for
   users whose source account is too full to complete a transfer otherwise.
   Subject to identical verification; only the timing differs.
+
+Both timings perform an **independent** existence and hash check against the
+destination after the upload completes, never reusing the upload response. A
+provider that acknowledges an upload it did not persist must not be able to
+authorise the deletion of the original, and an invariant satisfied by reading
+back the same response that claimed success is satisfied in name only.
 
 Neither can reach a permanent delete, because no code path can express one.
 
@@ -296,7 +313,8 @@ evidence of anything.
 | INV-5 | Purge never runs implicitly as part of a transfer, and always requires explicit confirmation | CLI tests assert the confirmation prompt and that `run` without the flag performs no deletion | Remove the confirmation gate; test must go red |
 | INV-6 | Dry run and real run produce an identical plan and share one code path | Test compares plans; effects are gated at a single boundary | Diverge the dry-run path; test must go red |
 | INV-7 | Items already in the source's trash are never enumerated, transferred or counted | Planner query asserts `trashed=false` on Drive and the equivalent on Graph; integration test trashes a file and asserts it is absent from the plan | Remove the filter; test must go red |
-| INV-8 | ShyFerry contacts the configured providers and nothing else | Test asserts the set of hosts contacted during a full local-to-local journey is empty, and during cloud journeys is limited to the providers' documented domains | Add a call to an unrelated host; test must go red |
+| INV-8 | ShyFerry contacts the configured providers and nothing else | A request recorder asserts every host contacted is one the active providers declare in their capabilities. The allowed set is **derived** from the loaded providers, never hand-listed. The test carries a liveness control: a deliberate request to a known host must be observed by the recorder in the same test, so a recorder that is not wired up fails rather than reporting an empty set | Add a call to an unrelated host; test must go red. Separately, detach the recorder; the liveness control must go red |
+| INV-9 | Nothing is recycled whose source has changed since it was transferred (R-04) | Purge compares the source item's current hash, revision or entity tag against the value recorded at transfer time, and refuses any item that differs | Edit a source file after transfer and before purge; purge must refuse it |
 
 The derived deny-list in INV-1 is deliberate. A hand-written list of banned
 method names would not have caught `files.emptyTrash`, which was missed in
@@ -360,6 +378,13 @@ are still not written to a file that users paste into issue reports.
 Collision policy at the destination, when a name already exists:
 `skip-if-identical` (default, by hash), `rename`, `overwrite`, or `fail`.
 
+`skip-if-identical` cannot use a hash for items converted under section 7,
+because a converted file legitimately differs from its source and the
+destination's hash is meaningless for comparison. Identity for those items is
+the recorded tuple of destination name, size and source revision identifier.
+Without this rule a second run cannot recognise its own previous output, and
+every Google document is either duplicated or overwritten on every run.
+
 ---
 
 ## 9. Command-line surface
@@ -417,8 +442,11 @@ therefore cause a purge to do less, and can never cause it to do more.
 
 ### 10.4 Resume
 
-`--resume RUN_ID` replays the manifest, skips items already verified, and
-re-plans the remainder. Interrupted resumable upload sessions are restarted
+`--resume RUN_ID` replays the manifest, skips the transfer of items already
+verified, and re-plans the remainder. An item that is verified but not yet
+recycled is not finished: under `--delete-after-each`, an interruption
+between verification and deletion leaves work outstanding, and resume
+completes the deletion rather than skipping the item as done. Interrupted resumable upload sessions are restarted
 from the last confirmed chunk boundary where the provider permits it, and
 from the beginning of that file where it does not. Provider upload sessions
 expire; an expired session is a normal condition and is re-established.
@@ -435,7 +463,8 @@ every story.
 - Unit tests over pure logic: planner, naming, collision resolution, filters,
   hashing, manifest state machine, configuration layering.
 - Property-based tests (Hypothesis) over filename sanitisation, path
-  portability and manifest replay.
+  portability and manifest replay, including both Unicode normalisation
+  forms (R-03).
 - Conformance tests: one suite, run against every provider.
 - Integration journeys against real accounts.
 - Mutation testing over the safety-critical modules: `verify`, `purge`,
@@ -468,7 +497,7 @@ failure of the harness.
 Journeys: first-run credential setup; plan and dry run; full transfer; native
 document conversion under each policy; verification; purge by separate pass;
 purge by `--delete-after-each`; interrupted transfer and resume; a file
-modified at source mid-run; destination quota exhaustion; throttling.
+modified at source mid-run; destination quota exhaustion (R-05); throttling.
 
 Free-tier storage ceilings (5 GB OneDrive, 15 GB Drive) bound these fixtures.
 Large-file and resume journeys therefore target the mechanism - chunk
@@ -498,7 +527,10 @@ three are load-bearing for this product.
 - Public, Apache-2.0, `Shyden-Ltd/ShyFerry`.
 - Branches: `main` and `develop`. Nothing merges to `main` directly. Every
   ticket gets a branch, which merges to `develop`.
-- `uv` for environment and lockfile. Python 3.12 pinned for development.
+- `uv` for environment and lockfile. Python 3.12 pinned for development;
+  `requires-python = ">=3.11"` declared in the package metadata, matching the
+  tested matrix exactly. A package installable on a version nothing tests is
+  a defect waiting for a bug report.
 - `ruff` for lint and format, `mypy --strict`, `pytest`, coverage gate.
 - `.github/dependabot.yml` covering `pip` and `github-actions`, both with
   `target-branch: develop`. Same-repository sub-path actions are grouped
@@ -534,13 +566,16 @@ three are load-bearing for this product.
 
 ## 14. Risks and open questions
 
-| ID | Question | How it will be settled |
-|---|---|---|
-| SPIKE-01 | Can Google native documents over 10 MB be exported through `files.download`, the long-running operation whose docs are silent on size and documented only for Google Vids? | Create a >10 MB Google Doc on a real account, attempt both paths, measure. Until measured, such files are non-transferable and therefore never deletable |
-| R-02 | Google Drive permits duplicate filenames in one folder; OneDrive does not, and is case-insensitive where Drive is case-sensitive | Treated as an assumption, proven by integration test, not asserted as fact. Collision policy in section 8 is the handling |
-| R-03 | Unicode normalisation differs between platforms and providers (NFC against NFD), producing false name mismatches | Normalise for comparison, preserve original bytes for display; property test over both forms |
-| R-04 | A file modified at the source between planning and transfer | Detected by hash mismatch at verification. Reported, not silently retried, and never deleted |
-| R-05 | Destination quota exhausted mid-run | Pre-flight comparison of planned bytes against destination free space, plus graceful handling and resume |
+Each risk names the story that owns it, so no risk is recorded without a
+place where it is actually discharged.
+
+| ID | Question | How it will be settled | Owner |
+|---|---|---|---|
+| SPIKE-01 | Can Google native documents over 10 MB be exported through `files.download`, the long-running operation whose docs are silent on size and documented only for Google Vids? | Create a >10 MB Google Doc on a real account, attempt both paths, measure. Until measured, such files are non-transferable and therefore never deletable | SPIKE-01, then S-13 |
+| R-02 | Google Drive permits duplicate filenames in one folder; OneDrive does not, and is case-insensitive where Drive is case-sensitive | Treated as an assumption, proven by integration test, not asserted as fact. Collision policy in section 8 is the handling, and the folder single-flight rule in section 4 is its consequence | S-09 |
+| R-03 | Unicode normalisation differs between platforms and providers (NFC against NFD), producing false name mismatches | Normalise for comparison, preserve original bytes for display; property test over both forms | S-09 |
+| R-04 | A file modified at the source between planning and transfer, or between transfer and purge | The first is detected by hash mismatch at verification. The second is INV-9 in section 6.4, which is the case that could otherwise lose data | S-12, S-14 |
+| R-05 | Destination quota exhausted mid-run | Pre-flight comparison of planned bytes against destination free space in `preflight.py`, accounting for content already present when resuming and for conversions changing size, plus graceful handling and resume | S-15 |
 
 ---
 
@@ -565,7 +600,7 @@ code.
 | S-11 | Manifest and resume |
 | S-12 | Verification and hash negotiation, including the unverifiable state |
 | S-13 | Native document export policy and the `explain` command |
-| S-14 | Purge: both timings, INV-1 to INV-8, mutation proofs |
+| S-14 | Purge: both timings, INV-1 to INV-9, mutation proofs |
 | S-15 | Destination quota pre-flight |
 | S-16 | CLI surface, dry-run parity, JSON reporting, exit codes |
 | S-17 | Documentation: README with limitations, SECURITY.md, CONTRIBUTING, CoC |
