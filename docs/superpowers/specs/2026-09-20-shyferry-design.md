@@ -28,6 +28,9 @@ recycle bin.
   bin, in either of two timings (section 6).
 - Resumable runs backed by an append-only manifest (section 10.3).
 - Customisation through a layered configuration file (section 8).
+- A pre-flight check that the destination has room, before any byte moves.
+- Run history that can be listed and pruned, under a default retention
+  window (section 10.3).
 - Extension to further providers by third parties, without modifying this
   codebase (section 3.3).
 
@@ -396,14 +399,21 @@ stopped being right.
 | INV-6 | Dry run and real run produce an identical plan and share one code path | Test compares plans; effects are gated at a single boundary | Diverge the dry-run path; test must go red |
 | INV-7 | Items already in the source's trash are never enumerated, transferred or counted | Planner query asserts `trashed=false` on Drive and the equivalent on Graph; integration test trashes a file and asserts it is absent from the plan | Remove the filter; test must go red |
 | INV-8 | ShyFerry contacts the configured providers and nothing else | A request recorder asserts every host contacted is one the active providers declare in their capabilities. The allowed set is **derived** from the loaded providers, never hand-listed. The test carries a liveness control: a deliberate request to a known host must be observed by the recorder in the same test, so a recorder that is not wired up fails rather than reporting an empty set | Add a call to an unrelated host; test must go red. Separately, detach the recorder; the liveness control must go red |
+| INV-13 | Only items the user owns are enumerated, transferred or recycled | The Drive query carries `'me' in owners` beside `trashed=false`. An integration test places a shared-with-me file within the transfer root and asserts it is absent from the plan | Remove the ownership term from the query; the shared-with-me test must go red |
 | INV-12 | A transfer whose destination lies inside its own source, on the same account, is refused before any byte moves | Pre-flight compares account identity and tests path containment in both directions | Remove the containment check from pre-flight; the nested-destination test must go red |
 | INV-10 | No credential material reaches logs, error output or reports | A redacting formatter is the only logging path. Tests push access tokens, client secrets and signed resumable-upload URLs through every reporting surface and assert none appears | Log a raw token; test must go red |
 | INV-11 | No OAuth client identifier or secret is embedded in the distributed package (D4) | A test scans the built wheel and source distribution for anything matching either provider's credential format | Embed a client ID in the source; test must go red |
 | INV-9 | Nothing is recycled whose source has changed since it was transferred (R-04) | OneDrive: the recorded eTag is sent as `if-match`, so the server refuses a stale deletion with 412 and the check is atomic. Drive: `headRevisionId` is re-read and compared immediately before trashing, since Drive accepts no precondition (R-06) | Remove the `if-match` header from the Graph path and skip the `headRevisionId` comparison on the Drive path; the source-changed test must go red for each |
 
 Ownership: INV-1 to INV-6 and INV-9 belong to S-14, INV-7 to S-09, INV-8 and
-INV-10 to S-16, INV-11 to S-05, and INV-12 to S-15. An invariant with no
-owning story is an intention rather than a control.
+INV-10 to S-16, INV-11 to S-05, INV-12 to S-15, and INV-13 to S-09. An
+invariant with no owning story is an intention rather than a control.
+
+INV-13 is INV-7's twin. Section 1.2 puts "Shared with me" content out of
+scope, and a scope statement enforces nothing: Drive's `files.list` returns
+everything the user can see, not everything they own, so without an
+ownership term the tool would ferry other people's files and then attempt to
+recycle originals that were never the user's to delete.
 
 INV-12 exists because a transfer that writes inside the tree it is reading
 grows without limit: each file copied becomes a new file to copy. It is the
@@ -701,6 +711,11 @@ three are load-bearing for this product.
 6. Deletion is to the recycle bin only, by design. ShyFerry cannot free
    quota instantly and will not.
 7. Tested up to free-tier storage limits; very large migrations are untested.
+8. A run resumed after an interruption re-reads the source file from the
+   beginning. Only the upload resumes, so resuming costs download bandwidth
+   again; this is what keeps verification honest (section 10.4).
+9. A file whose source has changed since it was transferred is left in place
+   rather than deleted, and reported. That is deliberate, not a failure.
 
 ---
 
@@ -715,8 +730,8 @@ place where it is actually discharged.
 | R-02 | Google Drive permits duplicate filenames in one folder; OneDrive does not, and is case-insensitive where Drive is case-sensitive | Treated as an assumption, proven by integration test, not asserted as fact. Collision policy in section 8 is the handling, and the folder single-flight rule in section 4 is its consequence | S-09 |
 | R-03 | Unicode normalisation differs between platforms and providers (NFC against NFD), producing false name mismatches | Normalise for comparison, preserve original bytes for display; property test over both forms | S-09 |
 | R-04 | A file modified at the source between planning and transfer, or between transfer and purge | The first is detected by hash mismatch at verification. The second is INV-9 in section 6.4, which is the case that could otherwise lose data | S-12, S-14 |
-| R-06 | Google Drive accepts no precondition on delete or update, so INV-9 on the Drive side is a read-then-act with a narrow race window, where the OneDrive side is atomic via `if-match` | Re-read `headRevisionId` immediately before trashing, keeping the window minimal. The residual risk is bounded by D5: the worst outcome of losing that race is an item in the user's own trash, recoverable by them, because ShyFerry cannot permanently delete anything | S-14 |
 | R-05 | Destination quota exhausted mid-run | Pre-flight comparison of planned bytes against destination free space in `preflight.py`, accounting for content already present when resuming and for conversions changing size, plus graceful handling and resume | S-15 |
+| R-06 | Google Drive accepts no precondition on delete or update, so INV-9 on the Drive side is a read-then-act with a narrow race window, where the OneDrive side is atomic via `if-match` | Re-read `headRevisionId` immediately before trashing, keeping the window minimal. The residual risk is bounded by D5: the worst outcome of losing that race is an item in the user's own trash, recoverable by them, because ShyFerry cannot permanently delete anything | S-14 |
 
 ---
 
