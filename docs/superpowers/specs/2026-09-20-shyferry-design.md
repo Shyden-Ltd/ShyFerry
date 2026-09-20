@@ -892,12 +892,20 @@ rest of the work runs against offline.
 Every load-bearing claim below was read from the vendor's own published
 source on 2026-09-20, not from recollection.
 
+These facts decay. The ones about an API's surface are re-checked
+automatically, because INV-1's guard downloads Google's discovery document
+on every CI run and would notice a method appearing or changing. The ones
+stated in prose - hash availability, chunk multiples, the export ceiling,
+the free-tier terms - are not machine-checkable, so each is re-read when the
+story that depends on it is next touched, and a claim that no longer matches
+its source is a defect in this document rather than a surprise in the field.
+
 | Claim | Source |
 |---|---|
 | `drive.files.delete` permanently deletes without trashing | Drive v3 discovery document, method description |
 | `drive.files.emptyTrash` permanently deletes all of the user's trashed files | Drive v3 discovery document, method description |
 | Drive checksums exist only for files with binary content | Drive v3 discovery document, `File.md5Checksum` and `File.sha256Checksum` |
-| `supportsAllDrives` is a parameter on `files.list` and `files.delete` | Drive v3 discovery document |
+| `supportsAllDrives` is a parameter on `files.list` and `files.delete`, and enumeration without it does not reach Shared Drives - the premise of INV-14, and of deferring business tiers under D8 | Drive v3 discovery document |
 | Google export is limited to 10 MB | `files.export` reference and the download guide |
 | `files.download` is a long-running operation valid for 24 hours, documented for Google Vids, silent on size | Drive v3 discovery document and the download guide |
 | Graph exposes `POST /drives/{drive-id}/items/{item-id}/permanentDelete` at v1.0 under `Files.ReadWrite` | Microsoft Learn, "Permanently delete a file or folder", graph-rest-1.0 |
