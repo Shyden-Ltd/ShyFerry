@@ -555,7 +555,7 @@ shyferry verify <run-id>            re-check a completed run
 shyferry purge-source <run-id>      recycle verified source files
                                     (--confirm <run-id> when non-interactive)
 shyferry explain native-files       the table in section 7
-shyferry report <run-id>            human or JSON output
+shyferry report <run-id>            human or JSON output (--redact-paths)
 shyferry runs list                  past runs and their outcomes
 shyferry runs prune                 discard manifests past the retention window
 ```
@@ -586,11 +586,15 @@ honoured, and colour is never the only carrier of meaning.
 
 ### 10.1 Retry policy
 
-Retries apply to transport failures and to documented throttling responses
-only. A 4xx that is not a throttle is a permanent failure for that item and
-is recorded; it never fails the whole run. Graph 429 responses honour
-`Retry-After`. Drive rate-limit responses use exponential backoff with
-jitter. Retry budgets are per item and per run, both configurable.
+Retries apply to transport failures and to documented throttling responses.
+A 4xx is not automatically permanent, and treating it so would break three
+cases that matter: 401 and 403 from an expired token trigger a refresh and
+a single retry; 412 is INV-9 declining a stale deletion, reported as a
+refusal rather than an error; 429 is throttling. Any other 4xx is a
+permanent failure for that item and is recorded, and no item's failure ever
+fails the whole run. Graph 429 responses honour `Retry-After`. Drive
+rate-limit responses use exponential backoff with jitter. Retry budgets are
+per item and per run, both configurable.
 
 Three conditions are not retryable and are handled as expected events rather
 than as crashes. **Revoked authorisation** mid-run - the user withdrew
@@ -632,9 +636,13 @@ user to discover, `shyferry report` can redact paths, and
 `shyferry runs prune` removes old manifests. Runs are retained for 90 days
 by default rather than forever.
 
-**The manifest is a worklist. It is never the authority.** Purge re-reads the
-live destination and re-compares hashes at the moment of deletion. A record
-that fails to parse is refused and reported; it is never skipped silently. A
+**The manifest is a worklist. It is never the authority.** The checks that
+license a deletion are defined once, in section 6.3, and are performed
+against the live providers at the moment of deletion. This section does not
+restate them: a gate described in three places is a gate that drifts in two
+of them, which is exactly what had happened here before this was written.
+A record that fails to parse is refused and reported; it is never
+skipped silently. A
 manifest that has been edited, truncated or copied between machines can
 therefore cause a purge to do less, and can never cause it to do more.
 
@@ -644,7 +652,9 @@ therefore cause a purge to do less, and can never cause it to do more.
 verified, and re-plans the remainder. An item that is verified but not yet
 recycled is not finished: under `--delete-after-each`, an interruption
 between verification and deletion leaves work outstanding, and resume
-completes the deletion rather than skipping the item as done. Resumption is asymmetric, deliberately. An interrupted upload continues from
+completes the deletion rather than skipping the item as done.
+
+Resumption is asymmetric, deliberately. An interrupted upload continues from
 the last chunk the destination confirmed, where the provider permits it. The
 **source is always re-read from the beginning**, because verification hashes
 the whole file in flight (section 5.2) and a hash computed over the tail of
