@@ -130,6 +130,16 @@ for cmd, where in sorted(mentioned.items()):
     if cmd not in surface:
         problems.append(f"command 'shyferry {cmd}' used at line(s) {where} is absent from the CLI surface")
 
+# --- 4f. every story cited anywhere exists in the breakdown ----------------
+STORY_REF = re.compile(r"\bS-(\d+)\b")
+control("story ref", STORY_REF.search, "owned by S-14")
+for i, l in enumerate(lines):
+    if STORY.match(l):
+        continue
+    for m in STORY_REF.finditer(l):
+        if int(m.group(1)) not in stories:
+            problems.append(f"S-{m.group(1)} cited at line {i + 1} but absent from the story breakdown")
+
 # --- 5. risk and spike ids referenced --------------------------------------
 for ident in set(re.findall(r"\b(?:SPIKE|R)-\d+\b", text)):
     if text.count(ident) < 2:

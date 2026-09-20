@@ -261,6 +261,18 @@ the value computed locally in flight:
 Because both comparisons are made against the same local computation, no
 cross-algorithm comparison is ever needed.
 
+Which algorithms the multi-hasher runs is **derived from the two providers'
+declared capabilities**, not fixed in code. A provider that reports only
+`crc32Hash` for a given file would otherwise be unverifiable purely because
+nobody remembered to add CRC32 to a list, and an item that cannot be
+verified cannot be deleted - so a stale list would quietly cost users the
+feature they came for.
+
+A file that fails either comparison is re-transferred, within the item's
+retry budget, by overwriting the same destination path. If the budget is
+exhausted the item is recorded `failed` and named in the report, and the
+partial or mismatched copy is **left where it is**: see INV-15.
+
 `quickXorHash` is implemented in this repository. It is not optional and not
 deferrable: it is the only hash guaranteed present on personal OneDrive, so
 without it no OneDrive file can be verified, and therefore no OneDrive file
@@ -399,6 +411,7 @@ stopped being right.
 | INV-6 | Dry run and real run produce an identical plan and share one code path | Test compares plans; effects are gated at a single boundary | Diverge the dry-run path; test must go red |
 | INV-7 | Items already in the source's trash are never enumerated, transferred or counted | Planner query asserts `trashed=false` on Drive and the equivalent on Graph; integration test trashes a file and asserts it is absent from the plan | Remove the filter; test must go red |
 | INV-8 | ShyFerry contacts the configured providers and nothing else | A request recorder asserts every host contacted is one the active providers declare in their capabilities. The allowed set is **derived** from the loaded providers, never hand-listed. The test carries a liveness control: a deliberate request to a known host must be observed by the recorder in the same test, so a recorder that is not wired up fails rather than reporting an empty set | Add a call to an unrelated host; test must go red. Separately, detach the recorder; the liveness control must go red |
+| INV-15 | `recycle` is only ever called on the source provider, never on the destination | The engine holds the destination behind a handle offering no `recycle`, and a test asserts the destination provider's `recycle` is never invoked across a full run including failed and mismatched transfers | Call `recycle` on the destination when cleaning up a failed upload; test must go red |
 | INV-14 | An account type outside the supported set is refused at authentication, never partially supported | `account_info()` reports the account type, and anything outside the set stops with an explanation naming the limitation | Accept an unsupported account type; the refusal test must go red |
 | INV-13 | Only items the user owns are enumerated, transferred or recycled | The Drive query carries `'me' in owners` beside `trashed=false`. An integration test places a shared-with-me file within the transfer root and asserts it is absent from the plan | Remove the ownership term from the query; the shared-with-me test must go red |
 | INV-12 | A transfer whose destination lies inside its own source, on the same account, is refused before any byte moves | Pre-flight compares account identity and tests path containment in both directions | Remove the containment check from pre-flight; the nested-destination test must go red |
@@ -407,9 +420,16 @@ stopped being right.
 | INV-9 | Nothing is recycled whose source has changed since it was transferred (R-04) | OneDrive: the recorded eTag is sent as `if-match`, so the server refuses a stale deletion with 412 and the check is atomic. Drive: `headRevisionId` is re-read and compared immediately before trashing, since Drive accepts no precondition (R-06) | Remove the `if-match` header from the Graph path and skip the `headRevisionId` comparison on the Drive path; the source-changed test must go red for each |
 
 Ownership: INV-1 to INV-6 and INV-9 belong to S-14, INV-7 to S-09, INV-8 and
-INV-10 to S-16, INV-11 to S-05, INV-12 to S-15, INV-13 to S-09, and INV-14
-to S-05. An invariant with no owning story is an intention rather than a
-control.
+INV-10 to S-16, INV-11 to S-05, INV-12 to S-15, INV-13 to S-09, INV-14 to
+S-05, and INV-15 to S-10. An invariant with no owning story is an intention
+rather than a control.
+
+INV-15 protects the destination from ShyFerry itself. A failed or mismatched
+upload leaves a bad file at the destination, and the obvious tidy-up is to
+delete it - which is a deletion this tool has no business performing, on a
+provider whose contents it did not inventory, in a place where a name
+collision with the user's own data is entirely possible. The mess is
+reported and left; the user decides.
 
 INV-14 guards the worst shape a deferred scope can take: not failure, but
 partial success. A business account would authenticate, and most of the tool
