@@ -146,9 +146,19 @@ class StorageProvider(Protocol):
 
 `ProviderCapabilities` declares what the planner must adapt to: the hash
 algorithms the provider reports, maximum file size, maximum path length,
-forbidden filename characters, whether names are case-sensitive, whether
-duplicate names may exist in one folder, and whether the provider has native
-document types requiring export.
+forbidden filename characters, reserved names, whether names are
+case-sensitive, whether duplicate names may exist in one folder, and whether
+the provider has native document types requiring export.
+
+OneDrive's naming rules are richer than a character blacklist and are
+declared in full: the characters `" * : < > ? / \ |`, no leading or trailing
+space, the reserved names `.lock`, `CON`, `PRN`, `AUX`, `NUL`, `COM0` to
+`COM9`, `LPT0` to `LPT9`, `_vti_` and `desktop.ini`, no name beginning `~$`,
+no folder named `forms` at a library root, and two specific characters barred
+as the first character of a folder name. Microsoft publishes **no single
+maximum path length**, noting instead that different applications and Office
+versions impose different limits, so the capability carries a conservative
+configured value rather than a fabricated authoritative one.
 
 **The protocol has no method that deletes permanently.** There is no
 `delete`, no `erase`, no `purge`, and no boolean argument on `recycle` that
@@ -224,10 +234,18 @@ the value computed locally in flight:
 Because both comparisons are made against the same local computation, no
 cross-algorithm comparison is ever needed.
 
-`quickXorHash` is implemented in this repository against Microsoft's
-published test vectors. It is not optional and not deferrable: it is the only
-hash guaranteed present on personal OneDrive, so without it no OneDrive file
-can be verified, and therefore no OneDrive file can ever be deleted.
+`quickXorHash` is implemented in this repository. It is not optional and not
+deferrable: it is the only hash guaranteed present on personal OneDrive, so
+without it no OneDrive file can be verified, and therefore no OneDrive file
+can ever be deleted.
+
+Microsoft publishes an algorithm description and a C# reference
+implementation, but **no known-answer test vectors**. A port checked only
+against a transcription of that sample proves the transcription, not the
+hash. The oracle is therefore the live service: upload known content to a
+real personal OneDrive account and assert our computed value equals the
+`quickXorHash` that Graph reports for it. Vectors obtained that way are then
+frozen into the unit suite, so the fast tests need no network afterwards.
 
 ### 5.3 When verification is impossible
 
@@ -266,8 +284,9 @@ enforcement in section 6.4 is mechanical rather than editorial.
 ### 6.2 What ShyFerry does instead
 
 - Google Drive: `files.update` with `trashed=true`.
-- OneDrive: `DELETE /me/drive/items/{item-id}`, which moves the item to the
-  recycle bin.
+- OneDrive: `DELETE /me/drive/items/{item-id}`. Microsoft's v1.0 reference
+  states that deleting by this method "moves the items to the recycle bin
+  instead of permanently deleting the item".
 - `local`: moves the file into a `.shyferry-trash` directory at the root of
   the transfer, preserving relative path. The local provider does not use the
   desktop trash, because that behaviour differs per platform and cannot be
@@ -276,8 +295,21 @@ enforcement in section 6.4 is mechanical rather than editorial.
   user-supplied filter would mean a second run over the same root ferries
   previously recycled files back again.
 
-Both cloud recycle bins retain items for a provider-defined period, typically
-around 30 days, during which the user can restore them without ShyFerry.
+Both cloud recycle bins retain items for a provider-defined period, during
+which the user can restore them without ShyFerry. The exact period varies by
+provider and account, so ShyFerry states it nowhere and relies on it for
+nothing; recoverability is a property of the user's account, not a promise
+this tool is in a position to make.
+
+The two providers differ in how a deletion can be made conditional, and the
+difference is load-bearing for INV-9. Graph accepts an `if-match` header on
+delete: "if the eTag (or cTag) provided doesn't match the current tag on the
+item, a `412 Precondition Failed` response is returned and the item isn't
+deleted". That makes the invariant **atomic on OneDrive** - the server, not
+ShyFerry, refuses a stale deletion. Drive v3 offers no equivalent: neither
+`files.update` nor `files.delete` accepts any precondition parameter, so the
+Drive path must read `headRevisionId`, compare, then trash, leaving a narrow
+window between the two (R-06).
 
 ### 6.3 The two timings
 
@@ -314,7 +346,7 @@ evidence of anything.
 | INV-6 | Dry run and real run produce an identical plan and share one code path | Test compares plans; effects are gated at a single boundary | Diverge the dry-run path; test must go red |
 | INV-7 | Items already in the source's trash are never enumerated, transferred or counted | Planner query asserts `trashed=false` on Drive and the equivalent on Graph; integration test trashes a file and asserts it is absent from the plan | Remove the filter; test must go red |
 | INV-8 | ShyFerry contacts the configured providers and nothing else | A request recorder asserts every host contacted is one the active providers declare in their capabilities. The allowed set is **derived** from the loaded providers, never hand-listed. The test carries a liveness control: a deliberate request to a known host must be observed by the recorder in the same test, so a recorder that is not wired up fails rather than reporting an empty set | Add a call to an unrelated host; test must go red. Separately, detach the recorder; the liveness control must go red |
-| INV-9 | Nothing is recycled whose source has changed since it was transferred (R-04) | Purge compares the source item's current hash, revision or entity tag against the value recorded at transfer time, and refuses any item that differs | Edit a source file after transfer and before purge; purge must refuse it |
+| INV-9 | Nothing is recycled whose source has changed since it was transferred (R-04) | OneDrive: the recorded eTag is sent as `if-match`, so the server refuses a stale deletion with 412 and the check is atomic. Drive: `headRevisionId` is re-read and compared immediately before trashing, since Drive accepts no precondition (R-06) | Edit a source file after transfer and before purge; purge must refuse it on both providers |
 
 The derived deny-list in INV-1 is deliberate. A hand-written list of banned
 method names would not have caught `files.emptyTrash`, which was missed in
@@ -575,6 +607,7 @@ place where it is actually discharged.
 | R-02 | Google Drive permits duplicate filenames in one folder; OneDrive does not, and is case-insensitive where Drive is case-sensitive | Treated as an assumption, proven by integration test, not asserted as fact. Collision policy in section 8 is the handling, and the folder single-flight rule in section 4 is its consequence | S-09 |
 | R-03 | Unicode normalisation differs between platforms and providers (NFC against NFD), producing false name mismatches | Normalise for comparison, preserve original bytes for display; property test over both forms | S-09 |
 | R-04 | A file modified at the source between planning and transfer, or between transfer and purge | The first is detected by hash mismatch at verification. The second is INV-9 in section 6.4, which is the case that could otherwise lose data | S-12, S-14 |
+| R-06 | Google Drive accepts no precondition on delete or update, so INV-9 on the Drive side is a read-then-act with a narrow race window, where the OneDrive side is atomic via `if-match` | Re-read `headRevisionId` immediately before trashing, keeping the window minimal. The residual risk is bounded by D5: the worst outcome of losing that race is an item in the user's own trash, recoverable by them, because ShyFerry cannot permanently delete anything | S-14 |
 | R-05 | Destination quota exhausted mid-run | Pre-flight comparison of planned bytes against destination free space in `preflight.py`, accounting for content already present when resuming and for conversions changing size, plus graceful handling and resume | S-15 |
 
 ---
@@ -590,7 +623,7 @@ code.
 | S-01 | Repository bootstrap: uv, ruff, mypy, pytest, CI matrix, Dependabot, branch protection, licence, project CLAUDE.md |
 | S-02 | Core models and layered configuration |
 | S-03 | `StorageProvider` protocol, capabilities, conformance suite, `local` provider |
-| S-04 | quickXorHash against Microsoft's published test vectors |
+| S-04 | quickXorHash, oracled against live Graph values (no published vectors exist) |
 | S-05 | OAuth2 PKCE and device-code flows, keyring storage, single-flight refresh |
 | S-06 | Bring-your-own credential setup wizard and provider registration guides |
 | S-07 | Google Drive provider, personal accounts |
@@ -632,3 +665,8 @@ source on 2026-09-20, not from recollection.
 | Limit of 100 refresh tokens per Google account per OAuth client ID | Google Identity, Using OAuth 2.0 |
 | Google Workspace has no permanently free tier; 14-day trial, then USD 7.00 per user per month | Google Workspace pricing |
 | The free Microsoft 365 E5 developer sandbox requires a Visual Studio Professional or Enterprise subscription, or membership of a qualifying programme | Microsoft 365 Developer Program |
+| Graph delete "moves the items to the recycle bin instead of permanently deleting the item" | Microsoft Learn, "Delete a file or folder", graph-rest-1.0 |
+| Graph delete accepts `if-match`, returning 412 and not deleting when the tag differs | Microsoft Learn, "Delete a file or folder", request headers |
+| Drive `files.update` and `files.delete` accept no precondition parameter; `File` exposes `headRevisionId` and `version` | Drive v3 discovery document, method parameters and `File` schema |
+| Microsoft publishes a quickXorHash algorithm description and C# reference implementation, but no known-answer test vectors | Microsoft Learn, QuickXOR Hash Sample |
+| OneDrive forbids nine characters (quotation mark, asterisk, colon, both angle brackets, question mark, both slashes, vertical bar), leading and trailing spaces, and a documented set of reserved names; no single maximum path length is published | Microsoft Support, invalid file names and file types |
