@@ -49,16 +49,23 @@ changing behaviour; it is checked in CI by `docs/superpowers/specs/spec_check.py
   caught it.
 - Branches: `main` and `develop`. Nothing merges to `main` directly. Every
   ticket gets a branch, which merges to `develop`.
-- Evidence page and operator sign-off before any merge. A green pipeline is a
-  precondition for sign-off, never a substitute for it.
+- A story merges into `develop` when CI is green **read job by job** and its
+  mutation matrix is clean (D9). One evidence page then covers every story and
+  is signed off before anything is published. A green pipeline is a
+  precondition for that sign-off, never a substitute for it.
+- **Run `./scripts/gate.sh` last, immediately before committing.** Running the
+  checks earlier in a session and then editing is how two commits have already
+  reached CI red while the local tree was believed green.
 
 ## Commands
 
 ```console
 uv sync --group dev          # install, hash-verified from the lockfile
-uv run pytest                # unit, guard and conformance tests
-uv run ruff check . && uv run ruff format --check .
-uv run mypy
-uv run python tests/mutations/supply_chain_matrix.py 8
-uv run python docs/superpowers/specs/spec_check.py
+./scripts/gate.sh            # everything CI runs: lint, format, types, tests, spec
+./scripts/gate.sh --mutate   # the above, plus every mutation matrix
+uv run pytest                # tests alone, while iterating
 ```
+
+Each matrix is given the number of tests its own targets have, so a moving
+denominator is caught rather than read as a pass. `gate.sh --mutate` counts
+them for you.
