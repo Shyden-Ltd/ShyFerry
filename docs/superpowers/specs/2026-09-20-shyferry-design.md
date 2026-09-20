@@ -78,6 +78,7 @@ implementation. Changing one is a new decision, recorded here.
 | D6 | Two deletion timings are offered: a separate verified pass (default), and per-file after each verified upload | 2026-09-20 |
 | D7 | Google native file handling is the user's choice, with the reasoning surfaced in the tool itself | 2026-09-20 |
 | D8 | MVP covers personal accounts only. Business tiers deferred until a free test tenant exists | 2026-09-20 |
+| D9 | Stories merge into `develop` on green CI across every phase. One evidence page covers all of them, signed off before anything is published | 2026-09-20 |
 
 D4 costs the user a one-off registration in Google Cloud and Microsoft Entra.
 In exchange: no verification fee, no annual CASA security assessment, no
@@ -808,9 +809,12 @@ three are load-bearing for this product.
 ## 12. Repository, CI and supply chain
 
 - Public, Apache-2.0, `Shyden-Ltd/ShyFerry` (D1, D2).
-- Every ticket carries an evidence page recording what was run and what was
-  observed, and the operator signs it off before the branch merges. A green
-  pipeline is a precondition for that sign-off, never a substitute for it.
+- A story merges into `develop` when CI is green **read job by job** and its
+  mutation matrix is clean (D9). One evidence page then covers every story,
+  and is signed off before anything is tagged or published. The gate sits in
+  front of the thing that reaches people, which here is PyPI and not
+  `develop`; a green pipeline remains a precondition for that sign-off and
+  never a substitute for it.
 - Installs in CI are hash-verified from the lockfile. A tool that handles
   other people's credentials does not resolve dependencies loosely.
 - The specification's own integrity checker runs in CI beside the test
