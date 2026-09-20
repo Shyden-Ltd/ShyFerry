@@ -170,6 +170,16 @@ for n in sorted(defined):
     if len(got) != 1:
         problems.append(f"INV-{n} is owned by {got or 'no story'}; exactly one story must own it")
 
+# --- 4h. code fences balance ----------------------------------------------
+def fences_unbalanced(body):
+    return body.count("\n```") % 2 != 0
+
+
+control("unbalanced fence", fences_unbalanced, "a\n```\nb")
+control("unbalanced fence, negative", fences_unbalanced, "a\n```\nb\n```\nc", expect=False)
+if fences_unbalanced("\n" + text):
+    problems.append("code fences do not balance; every renderer will swallow the rest of the document")
+
 # --- 5. risk and spike ids referenced --------------------------------------
 def cited_once_only(haystack, ident):
     return haystack.count(ident) < 2
