@@ -93,13 +93,25 @@ for n in sorted(d_defined - d_cited):
     problems.append(f"D{n} is decided but never cited in the section that realises it")
 
 # --- 4c. every invariant carries a mutation --------------------------------
+def inv_row_lacks_mutation(row):
+    cells = [c.strip() for c in row.strip().strip("|").split("|")]
+    return len(cells) != 4 or not cells[3]
+
+
+control("inv mutation", inv_row_lacks_mutation, "| INV-9 | claim | how |  |")
+control("inv mutation, negative", inv_row_lacks_mutation,
+        "| INV-9 | claim | how | remove the control |", expect=False)
 for i, l in enumerate(lines):
-    if l.lstrip().startswith("| INV-"):
-        cells = [c.strip() for c in l.strip().strip("|").split("|")]
-        if len(cells) != 4 or not cells[3]:
-            problems.append(f"INV row at line {i + 1} has no mutation: {cells[0]}")
+    if l.lstrip().startswith("| INV-") and inv_row_lacks_mutation(l):
+        problems.append(f"INV row at line {i + 1} has no mutation: {l.strip()[:48]}")
 
 # --- 4d. table blocks have a consistent column count -----------------------
+def block_is_ragged(rows):
+    return len({r.count("|") for r in rows}) > 1
+
+
+control("ragged table", block_is_ragged, ["| a | b |", "| a | b | c |"])
+control("ragged table, negative", block_is_ragged, ["| a | b |", "| c | d |"], expect=False)
 block, start = [], 0
 for i, l in enumerate(lines + [""]):
     if l.startswith("|"):
@@ -108,9 +120,9 @@ for i, l in enumerate(lines + [""]):
         block.append(l)
         continue
     if block:
-        widths = {r.count("|") for r in block}
-        if len(widths) > 1:
-            problems.append(f"table starting line {start} has ragged rows: widths {sorted(widths)}")
+        if block_is_ragged(block):
+            widths = sorted({r.count("|") for r in block})
+            problems.append(f"table starting line {start} has ragged rows: widths {widths}")
         block = []
 
 # --- 4e. every command mentioned anywhere is in the documented CLI surface --
@@ -159,8 +171,15 @@ for n in sorted(defined):
         problems.append(f"INV-{n} is owned by {got or 'no story'}; exactly one story must own it")
 
 # --- 5. risk and spike ids referenced --------------------------------------
+def cited_once_only(haystack, ident):
+    return haystack.count(ident) < 2
+
+
+control("orphan identifier", lambda s: cited_once_only(s, "R-99"), "a table row about R-99 only")
+control("orphan identifier, negative", lambda s: cited_once_only(s, "R-99"),
+        "R-99 defined here and R-99 cited there", expect=False)
 for ident in set(re.findall(r"\b(?:SPIKE|R)-\d+\b", text)):
-    if text.count(ident) < 2:
+    if cited_once_only(text, ident):
         problems.append(f"{ident} appears only once; defined but never referenced")
 
 # --- 6. deferred-scope terms must not appear as in-scope -------------------

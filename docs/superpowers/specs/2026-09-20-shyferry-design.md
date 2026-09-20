@@ -565,8 +565,9 @@ every Google document is either duplicated or overwritten on every run.
 
 ```
 shyferry auth setup <provider>      register credentials, guided
-shyferry auth login <provider>      run the OAuth flow
-shyferry auth status                accounts, scopes, token expiry
+shyferry auth login <provider>      run the OAuth flow (--as <alias>)
+shyferry auth status                accounts, aliases, scopes, token expiry,
+                                    and the resolved config file path
 shyferry plan <src> <dst>           enumerate and report, change nothing
 shyferry run <src> <dst>            transfer, with --dry-run and --resume
 shyferry verify <run-id>            re-check a completed run
@@ -578,12 +579,20 @@ shyferry runs list                  past runs and their outcomes
 shyferry runs prune                 discard manifests past the retention window
 ```
 
-Source and destination are written as `<provider>:<path>` - `gdrive:/`,
-`onedrive:/Photos`, `local:~/Backup`. The prefix is the name the provider
-registers under, so a third-party provider is addressed exactly like a
-built-in one, and a bare path with no prefix means `local:`. A locator parses
-to a provider, an account and a path, which is precisely the triple INV-12
-compares for containment.
+Source and destination are written as `<provider>[@<account>]:<path>` -
+`gdrive:/`, `onedrive:/Photos`, `gdrive@work:/Archive`, `local:~/Backup`.
+The prefix is the name the provider registers under, so a third-party
+provider is addressed exactly like a built-in one, and a bare path with no
+prefix means `local:`.
+
+The account part is optional and exists because a locator parses to a
+provider, an **account** and a path - the triple INV-12 compares for
+containment. Omitting it is unambiguous only while one account is
+authenticated for that provider. With two, ShyFerry refuses and names them
+rather than choosing: guessing which of a user's two Google accounts to
+empty is not a decision this tool should make on their behalf. Accounts are
+given their alias at `shyferry auth login`, and `shyferry auth status`
+lists them.
 
 Exit codes are meaningful and documented: 0 success, 1 partial with
 failures, 2 configuration or credential error, 3 refused by a safety gate.
@@ -858,7 +867,7 @@ code.
 
 | ID | Story |
 |---|---|
-| S-01 | Repository bootstrap: uv, ruff, mypy, pytest, CI matrix, Dependabot, branch protection, licence, project CLAUDE.md |
+| S-01 | Repository bootstrap: uv, ruff, mypy, pytest, CI matrix, Dependabot, branch protection, licence, project CLAUDE.md, and this specification's own checker wired into CI with a control on every check |
 | S-02 | Core models and layered configuration |
 | S-03 | `StorageProvider` protocol, capabilities, entry-point registry, conformance suite exported as a pytest plugin, `local` provider |
 | S-04 | quickXorHash, oracled against live Graph values (no published vectors exist) |
