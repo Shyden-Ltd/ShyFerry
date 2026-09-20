@@ -226,9 +226,26 @@ able to move a library far larger than that.
   conformance test that races N workers at one nested path and asserts a
   single folder identifier results. See R-02.
 - Transport is `httpx` with an async, bounded worker pool.
-- Defaults are stated rather than left to emerge: 8 MiB chunks and 4 workers,
-  giving a documented peak transfer buffer of 32 MiB. "Bounded by
+- Defaults are stated rather than left to emerge: **7.5 MiB chunks** and 4
+  workers, giving a documented peak transfer buffer of 30 MiB. "Bounded by
   configuration" is not a bound until the configuration has a number in it.
+- 7.5 MiB is not a round number by accident. Graph requires every byte range
+  to be "a multiple of 320 KiB (327,680 bytes)" and warns that a fragment
+  size which does not divide evenly "can result in large file transfers
+  failing after the last byte range is uploaded" - that is, after the whole
+  file has crossed the wire. Drive requires "multiples of 256 KB". The
+  smallest size satisfying both is their lowest common multiple, 1.25 MiB,
+  and 7.5 MiB is the sixth multiple of it, inside Graph's recommended 5 to
+  10 MiB band. A plain 8 MiB, the obvious default, is a multiple of 256 KiB
+  and **not** of 320 KiB, so it would have failed on OneDrive at the worst
+  possible moment.
+- Chunk granularity is a declared `ProviderCapabilities` field, and the
+  engine uses the lowest common multiple of the source's and destination's
+  requirements rather than a constant. A provider added later brings its own
+  granularity with it.
+- Graph caps a single request at 60 MiB and recommends resumable sessions
+  above 10 MiB; those thresholds are provider capabilities too, not
+  constants in the engine.
 
 ---
 
@@ -667,7 +684,11 @@ re-reading the source recovers nearly all of the cost. This is also why
 a file.
 
 Provider upload sessions expire; an expired session is a normal condition
-and is re-established.
+and is re-established. Graph's guidance is explicit about the shape of that
+recovery: a `404` on a resumable upload means the session no longer exists
+and the file starts over, while 5xx responses are retried with exponential
+backoff. Treating a 404 as a retryable transport error would loop against a
+session that can never come back.
 
 ---
 
@@ -823,7 +844,7 @@ place where it is actually discharged.
 | R-02 | Google Drive permits duplicate filenames in one folder; OneDrive does not, and is case-insensitive where Drive is case-sensitive | Treated as an assumption, proven by integration test, not asserted as fact. Collision policy in section 8 is the handling, and the folder single-flight rule in section 4 is its consequence | S-09 |
 | R-03 | Unicode normalisation differs between platforms and providers (NFC against NFD), producing false name mismatches | Normalise for comparison, preserve original bytes for display; property test over both forms | S-09 |
 | R-04 | A file modified at the source between planning and transfer, or between transfer and purge | The first is detected by hash mismatch at verification. The second is INV-9 in section 6.4, which is the case that could otherwise lose data | S-12, S-14 |
-| R-05 | Destination quota exhausted mid-run | Pre-flight comparison of planned bytes against destination free space in `preflight.py`, accounting for content already present when resuming and for conversions changing size, plus graceful handling and resume | S-15 |
+| R-05 | Destination quota exhausted mid-run | Pre-flight comparison of planned bytes against destination free space in `preflight.py`, accounting for content already present when resuming and for conversions changing size, plus graceful handling and resume. Graph gives a second line of defence per file: `createUploadSession` takes a `fileSize` and answers `507 Insufficient Storage` without creating the session, so the failure arrives before the bytes rather than after them | S-15 |
 | R-06 | Google Drive accepts no precondition on delete or update, so INV-9 on the Drive side is a read-then-act with a narrow race window, where the OneDrive side is atomic via `if-match` | Re-read `headRevisionId` immediately before trashing, keeping the window minimal. The residual risk is bounded by D5: the worst outcome of losing that race is an item in the user's own trash, recoverable by them, because ShyFerry cannot permanently delete anything | S-14 |
 
 ---
@@ -885,4 +906,8 @@ source on 2026-09-20, not from recollection.
 | Graph delete accepts `if-match`, returning 412 and not deleting when the tag differs | Microsoft Learn, "Delete a file or folder", request headers |
 | Drive `files.update` and `files.delete` accept no precondition parameter; `File` exposes `headRevisionId` and `version` | Drive v3 discovery document, method parameters and `File` schema |
 | Microsoft publishes a quickXorHash algorithm description and C# reference implementation, but no known-answer test vectors | Microsoft Learn, QuickXOR Hash Sample |
+| Graph upload byte ranges MUST be a multiple of 320 KiB; a size that does not divide evenly "can result in large file transfers failing after the last byte range is uploaded"; single requests cap at 60 MiB; 5 to 10 MiB is recommended | Microsoft Learn, "driveItem: createUploadSession", v1.0 |
+| Drive resumable uploads require chunks "in multiples of 256 KB", except the final chunk | Google, Manage uploads guide |
+| A Graph resumable upload returning 404 means the session no longer exists and the upload restarts; 5xx is retried with exponential backoff | Microsoft Learn, createUploadSession best practices |
+| Graph `createUploadSession` accepts a `fileSize` and returns `507 Insufficient Storage` without creating the session when it exceeds quota | Microsoft Learn, createUploadSession response |
 | OneDrive forbids nine characters (quotation mark, asterisk, colon, both angle brackets, question mark, both slashes, vertical bar), leading and trailing spaces, and a documented set of reserved names; no single maximum path length is published | Microsoft Support, invalid file names and file types |
