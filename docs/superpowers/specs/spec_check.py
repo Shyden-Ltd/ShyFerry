@@ -82,6 +82,37 @@ if claim:
     elif want != len(stories):
         problems.append(f"prose claims {claim.group(0)} but table lists {len(stories)}")
 
+# --- 4b. decisions cited where they are realised ---------------------------
+DECISION = re.compile(r"\bD([1-9]\d?)\b")
+control("decision id", DECISION.search, "as required by D5")
+d_defined, d_cited = set(), set()
+for l in lines:
+    for m in DECISION.finditer(l):
+        (d_defined if l.lstrip().startswith(f"| D{m.group(1)} |") else d_cited).add(int(m.group(1)))
+for n in sorted(d_defined - d_cited):
+    problems.append(f"D{n} is decided but never cited in the section that realises it")
+
+# --- 4c. every invariant carries a mutation --------------------------------
+for i, l in enumerate(lines):
+    if l.lstrip().startswith("| INV-"):
+        cells = [c.strip() for c in l.strip().strip("|").split("|")]
+        if len(cells) != 4 or not cells[3]:
+            problems.append(f"INV row at line {i + 1} has no mutation: {cells[0]}")
+
+# --- 4d. table blocks have a consistent column count -----------------------
+block, start = [], 0
+for i, l in enumerate(lines + [""]):
+    if l.startswith("|"):
+        if not block:
+            start = i + 1
+        block.append(l)
+        continue
+    if block:
+        widths = {r.count("|") for r in block}
+        if len(widths) > 1:
+            problems.append(f"table starting line {start} has ragged rows: widths {sorted(widths)}")
+        block = []
+
 # --- 5. risk and spike ids referenced --------------------------------------
 for ident in set(re.findall(r"\b(?:SPIKE|R)-\d+\b", text)):
     if text.count(ident) < 2:

@@ -202,6 +202,9 @@ able to move a library far larger than that.
   conformance test that races N workers at one nested path and asserts a
   single folder identifier results. See R-02.
 - Transport is `httpx` with an async, bounded worker pool.
+- Defaults are stated rather than left to emerge: 8 MiB chunks and 4 workers,
+  giving a documented peak transfer buffer of 32 MiB. "Bounded by
+  configuration" is not a bound until the configuration has a number in it.
 
 ---
 
@@ -246,6 +249,13 @@ hash. The oracle is therefore the live service: upload known content to a
 real personal OneDrive account and assert our computed value equals the
 `quickXorHash` that Graph reports for it. Vectors obtained that way are then
 frozen into the unit suite, so the fast tests need no network afterwards.
+
+The implementation is written from Microsoft's published algorithm
+description, which is prose and pseudocode, and **not transcribed from their
+C# sample**. That keeps an Apache-2.0 repository clear of a licensing
+question over vendor sample code, and it is the better engineering choice
+anyway: the description is the specification, while the sample is one
+implementation of it, complete with its own architecture-dependent caveats.
 
 ### 5.3 When verification is impossible
 
@@ -311,7 +321,7 @@ ShyFerry, refuses a stale deletion. Drive v3 offers no equivalent: neither
 Drive path must read `headRevisionId`, compare, then trash, leaving a narrow
 window between the two (R-06).
 
-### 6.3 The two timings
+### 6.3 The two timings (D6)
 
 - `shyferry purge-source RUN_ID` (default): a separate command, run after a
   transfer. It reads the manifest as a worklist, re-checks each item against
@@ -346,7 +356,13 @@ evidence of anything.
 | INV-6 | Dry run and real run produce an identical plan and share one code path | Test compares plans; effects are gated at a single boundary | Diverge the dry-run path; test must go red |
 | INV-7 | Items already in the source's trash are never enumerated, transferred or counted | Planner query asserts `trashed=false` on Drive and the equivalent on Graph; integration test trashes a file and asserts it is absent from the plan | Remove the filter; test must go red |
 | INV-8 | ShyFerry contacts the configured providers and nothing else | A request recorder asserts every host contacted is one the active providers declare in their capabilities. The allowed set is **derived** from the loaded providers, never hand-listed. The test carries a liveness control: a deliberate request to a known host must be observed by the recorder in the same test, so a recorder that is not wired up fails rather than reporting an empty set | Add a call to an unrelated host; test must go red. Separately, detach the recorder; the liveness control must go red |
+| INV-10 | No credential material reaches logs, error output or reports | A redacting formatter is the only logging path. Tests push access tokens, client secrets and signed resumable-upload URLs through every reporting surface and assert none appears | Log a raw token; test must go red |
+| INV-11 | No OAuth client identifier or secret is embedded in the distributed package (D4) | A test scans the built wheel and source distribution for anything matching either provider's credential format | Embed a client ID in the source; test must go red |
 | INV-9 | Nothing is recycled whose source has changed since it was transferred (R-04) | OneDrive: the recorded eTag is sent as `if-match`, so the server refuses a stale deletion with 412 and the check is atomic. Drive: `headRevisionId` is re-read and compared immediately before trashing, since Drive accepts no precondition (R-06) | Edit a source file after transfer and before purge; purge must refuse it on both providers |
+
+Ownership: INV-1 to INV-6 and INV-9 belong to S-14, INV-7 to S-09, INV-8 and
+INV-10 to S-16, and INV-11 to S-05. An invariant with no owning story is an
+intention rather than a control.
 
 The derived deny-list in INV-1 is deliberate. A hand-written list of banned
 method names would not have caught `files.emptyTrash`, which was missed in
@@ -361,7 +377,7 @@ Google Docs, Sheets, Slides and Drawings have no bytes to download.
 `files.get` with `alt=media` does not apply to them; they exist only as
 server-side objects and must be converted through `files.export`.
 
-Policy is set per type in configuration, with these values:
+Policy is set per type in configuration (D7), with these values:
 
 | Policy | Behaviour | Why a user would choose it |
 |---|---|---|
@@ -437,6 +453,11 @@ Exit codes are meaningful and documented: 0 success, 1 partial with
 failures, 2 configuration or credential error, 3 refused by a safety gate.
 `--json` produces machine-readable output on every command that reports.
 
+Output conventions: machine-readable output goes to stdout and everything
+else to stderr, so `--json` stays parseable when piped. Progress rendering
+degrades to plain lines when stdout is not a terminal. `NO_COLOR` is
+honoured, and colour is never the only carrier of meaning.
+
 ---
 
 ## 10. Errors, retries and resumability
@@ -465,6 +486,14 @@ messages, not stack traces.
 An append-only JSONL journal per run, at the platform state directory, one
 record per state transition: `planned`, `transferred`, `verified`,
 `unverifiable`, `failed`, `skipped`, `recycled`.
+
+A manifest is an inventory of the user's entire file tree in plain text:
+names, paths, sizes and hashes. That is sensitive on its own, independently
+of the files it describes. It is written with owner-only permissions, its
+location and contents are documented in `SECURITY.md` rather than left for a
+user to discover, `shyferry report` can redact paths, and
+`shyferry runs prune` removes old manifests. Runs are retained for 90 days
+by default rather than forever.
 
 **The manifest is a worklist. It is never the authority.** Purge re-reads the
 live destination and re-compares hashes at the moment of deletion. A record
@@ -556,10 +585,15 @@ three are load-bearing for this product.
 
 ## 12. Repository, CI and supply chain
 
-- Public, Apache-2.0, `Shyden-Ltd/ShyFerry`.
+- Public, Apache-2.0, `Shyden-Ltd/ShyFerry` (D1, D2).
+- Every ticket carries an evidence page recording what was run and what was
+  observed, and the operator signs it off before the branch merges. A green
+  pipeline is a precondition for that sign-off, never a substitute for it.
+- Installs in CI are hash-verified from the lockfile. A tool that handles
+  other people's credentials does not resolve dependencies loosely.
 - Branches: `main` and `develop`. Nothing merges to `main` directly. Every
   ticket gets a branch, which merges to `develop`.
-- `uv` for environment and lockfile. Python 3.12 pinned for development;
+- `uv` for environment and lockfile (D3). Python 3.12 pinned for development;
   `requires-python = ">=3.11"` declared in the package metadata, matching the
   tested matrix exactly. A package installable on a version nothing tests is
   a defect waiting for a bug report.
@@ -633,10 +667,10 @@ code.
 | S-11 | Manifest and resume |
 | S-12 | Verification and hash negotiation, including the unverifiable state |
 | S-13 | Native document export policy and the `explain` command |
-| S-14 | Purge: both timings, INV-1 to INV-9, mutation proofs |
+| S-14 | Purge: both timings, INV-1 to INV-6 and INV-9, mutation proofs |
 | S-15 | Destination quota pre-flight |
 | S-16 | CLI surface, dry-run parity, JSON reporting, exit codes |
-| S-17 | Documentation: README with limitations, SECURITY.md, CONTRIBUTING, CoC |
+| S-17 | Documentation: README with limitations, SECURITY.md including the manifest's contents and location, CONTRIBUTING, CoC |
 | S-18 | Real-account journeys, release workflow, PyPI publication |
 | SPIKE-01 | Google native export above 10 MB |
 
