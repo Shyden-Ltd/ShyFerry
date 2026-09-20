@@ -332,12 +332,19 @@ window between the two (R-06).
 
 - `shyferry purge-source RUN_ID` (default): a separate command, run after a
   transfer. It reads the manifest as a worklist, re-checks each item against
-  the live destination, and recycles only those that pass. Requires explicit
-  confirmation.
+  the live destination, and recycles only those that pass.
 - `shyferry run --delete-after-each` (opt-in): recycles each source file
   immediately after that file's own upload has been verified. Intended for
   users whose source account is too full to complete a transfer otherwise.
   Subject to identical verification; only the timing differs.
+
+Confirmation is specified rather than left to the implementation, because an
+under-specified confirmation becomes a blanket `--yes` the first time
+somebody scripts it. Interactively, the user types the run identifier.
+Non-interactively, `--confirm RUN_ID` must match the run being purged. The
+token is therefore never reusable: a command copied from a previous run, a
+shell history entry or a README cannot authorise a deletion it was not
+written for, and there is no flag that means "whatever run this is".
 
 Both timings perform an **independent** existence and hash check against the
 destination after the upload completes, never reusing the upload response. A
@@ -364,7 +371,7 @@ stopped being right.
 | INV-2 | `StorageProvider` exposes no permanent-delete method | Conformance test asserts the protocol's method set exactly | Add `delete_forever` to the protocol; test must go red |
 | INV-3 | Nothing is recycled without a live destination check at the moment of deletion | Unit tests plus a journey that removes a file from the destination after transfer and asserts purge refuses it | Make purge trust the manifest record; tests must go red |
 | INV-4 | An `unverifiable` item can never be recycled | Purge filters on verification state; property test over generated manifests | Mark an unverifiable item eligible; test must go red |
-| INV-5 | Purge never runs implicitly as part of a transfer, and always requires explicit confirmation | CLI tests assert the confirmation prompt and that `run` without the flag performs no deletion | Remove the confirmation gate; test must go red |
+| INV-5 | Purge never runs implicitly as part of a transfer, and always requires a confirmation naming the specific run | CLI tests assert that `run` without `--delete-after-each` deletes nothing, that a purge with no confirmation deletes nothing, and that a confirmation quoting a *different* run identifier is refused | Accept any non-empty confirmation value; the wrong-run test must go red |
 | INV-6 | Dry run and real run produce an identical plan and share one code path | Test compares plans; effects are gated at a single boundary | Diverge the dry-run path; test must go red |
 | INV-7 | Items already in the source's trash are never enumerated, transferred or counted | Planner query asserts `trashed=false` on Drive and the equivalent on Graph; integration test trashes a file and asserts it is absent from the plan | Remove the filter; test must go red |
 | INV-8 | ShyFerry contacts the configured providers and nothing else | A request recorder asserts every host contacted is one the active providers declare in their capabilities. The allowed set is **derived** from the loaded providers, never hand-listed. The test carries a liveness control: a deliberate request to a known host must be observed by the recorder in the same test, so a recorder that is not wired up fails rather than reporting an empty set | Add a call to an unrelated host; test must go red. Separately, detach the recorder; the liveness control must go red |
@@ -463,6 +470,7 @@ shyferry plan <src> <dst>           enumerate and report, change nothing
 shyferry run <src> <dst>            transfer, with --dry-run and --resume
 shyferry verify <run-id>            re-check a completed run
 shyferry purge-source <run-id>      recycle verified source files
+                                    (--confirm <run-id> when non-interactive)
 shyferry explain native-files       the table in section 7
 shyferry report <run-id>            human or JSON output
 shyferry runs list                  past runs and their outcomes
