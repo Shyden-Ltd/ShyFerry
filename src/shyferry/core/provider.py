@@ -86,8 +86,14 @@ class ProviderCapabilities:
             return "has a leading or trailing space"
         if name.endswith("."):
             return "ends with a period"
+        # Two shapes of reserved name, and both are real. `CON` is reserved as
+        # a STEM, so `CON.txt` is refused too. `.lock` and `desktop.ini` are
+        # reserved as WHOLE names, and `.lock.txt` is an ordinary file.
+        reserved = {name.upper() for name in self.reserved_names}
         stem = name.split(".", 1)[0]
-        if stem.upper() in {reserved.upper() for reserved in self.reserved_names}:
+        if name.upper() in reserved:
+            return f"{name!r} is a reserved name"
+        if stem and stem.upper() in reserved:
             return f"{stem!r} is a reserved name"
         if any(name.startswith(prefix) for prefix in self.forbidden_name_prefixes):
             return "begins with a forbidden prefix"

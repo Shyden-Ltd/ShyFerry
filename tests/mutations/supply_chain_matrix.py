@@ -1,12 +1,6 @@
-"""Mutation matrix for the supply-chain guard.
+"""Mutation matrix for the supply-chain guard (S-01).
 
     python3 tests/mutations/supply_chain_matrix.py <expected test count>
-
-Works on a copy of the repository; the real files are never touched. Every
-mutant runs the WHOLE guard file, and a verdict is believed only when the test
-count matches - a denominator that moves means tests were dropped rather than
-passed. Each anchor must match exactly once, and each mutation prints the text
-it changed, so a pass after a no-op mutation cannot be read as evidence.
 
 M5 is the one worth reading twice. It removes the sub-path group while leaving
 the comment that explains it in place, which is the exact defect shyden.co.uk
@@ -16,21 +10,19 @@ file's own documentation, and passed with nothing configured at all.
 
 from __future__ import annotations
 
-import re
-import shutil
-import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
-GUARD = "tests/guards/test_supply_chain.py"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from harness import Mutation, main
 
 CI = ".github/workflows/ci.yml"
 DEPENDABOT = ".github/dependabot.yml"
 PYPROJECT = "pyproject.toml"
+GUARD = "tests/guards/test_supply_chain.py"
 
-Mutation = tuple[str, str, str, str, str]
+TARGETS = (GUARD,)
 
 MUTATIONS: list[Mutation] = [
     (
@@ -51,7 +43,7 @@ MUTATIONS: list[Mutation] = [
     ),
     # Anchored across the whole pip block: `target-branch: "develop"` alone
     # appears twice, and an earlier version of this mutation simply ADDED a
-    # second target-branch key, which PyYAML resolves to the last one. The
+    # second target-branch key, which YAML resolves to the last one. The
     # config was unchanged in effect and the guard was right to stay green.
     (
         "M3 pip stops targeting develop",
@@ -68,7 +60,7 @@ MUTATIONS: list[Mutation] = [
     # stops reading anything, not only when a comment is missing.
     (
         "M3b the version-comment scan is blinded",
-        "tests/guards/test_supply_chain.py",
+        GUARD,
         'USES_LINE = re.compile(r"^-?\\s*uses:\\s*(\\S+)")',
         'USES_LINE = re.compile(r"^uses:\\s*(\\S+)")',
         "RED",
@@ -121,85 +113,5 @@ MUTATIONS: list[Mutation] = [
     ),
 ]
 
-
-def run_guard(root: Path, expected: int) -> tuple[str, int, list[str]]:
-    done = subprocess.run(
-        # `-o addopts=` clears the project's own `-q`. Two levels of quiet
-        # suppress the summary line entirely, and a harness that reads no
-        # summary counts zero tests - which looks exactly like a run that
-        # collected nothing.
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            GUARD,
-            "-o",
-            "addopts=",
-            "-q",
-            "--tb=no",
-            "-p",
-            "no:cacheprovider",
-        ],
-        cwd=root,
-        capture_output=True,
-        text=True,
-    )
-    out = done.stdout + done.stderr
-    passed = sum(int(n) for n in re.findall(r"(\d+) passed", out))
-    failed = sum(int(n) for n in re.findall(r"(\d+) failed", out))
-    errors = sum(int(n) for n in re.findall(r"(\d+) error", out))
-    ran = passed + failed + errors
-    failing = sorted(
-        set(re.findall(r"FAILED \S+::(\w+)::(\w+)", out))
-        | set(re.findall(r"ERROR \S+::(\w+)::(\w+)", out))
-    )
-    verdict = "GREEN" if failed == 0 and errors == 0 else "RED"
-    if ran != expected:
-        verdict = f"DENOMINATOR MOVED ({ran} != {expected})"
-    return verdict, ran, [f"{cls}.{name}" for cls, name in failing]
-
-
-def main() -> None:
-    expected = int(sys.argv[1])
-    mismatches = 0
-
-    baseline, ran, _ = run_guard(REPO, expected)
-    print(f"baseline: {baseline}, ran={ran}")
-    if baseline != "GREEN":
-        raise SystemExit("the unmodified tree is not green; nothing below would mean anything")
-
-    for name, relative, old, new, predicted in MUTATIONS:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp) / "repo"
-            shutil.copytree(
-                REPO,
-                root,
-                ignore=shutil.ignore_patterns(
-                    ".git", ".venv", "__pycache__", ".pytest_cache", ".ruff_cache"
-                ),
-            )
-            target = root / relative
-            text = target.read_text(encoding="utf-8")
-            hits = text.count(old)
-            if hits != 1:
-                print(f"{name}: ANCHOR MATCHED {hits} TIMES, mutation not applied")
-                mismatches += 1
-                continue
-            target.write_text(text.replace(old, new), encoding="utf-8")
-            shown = (new or "<deleted>").splitlines()[0][:70]
-            print(f"{name}: {old.splitlines()[0][:60]!r} -> {shown!r}")
-
-            verdict, ran, failing = run_guard(root, expected)
-            ok = verdict == predicted
-            mismatches += 0 if ok else 1
-            print(
-                f"   {'as predicted' if ok else 'MISMATCH'}: {verdict} "
-                f"(predicted {predicted}), ran={ran} failing={failing}"
-            )
-
-    print(f"\nMISMATCHES: {mismatches} of {len(MUTATIONS)}")
-    raise SystemExit(1 if mismatches else 0)
-
-
 if __name__ == "__main__":
-    main()
+    main(MUTATIONS, TARGETS)
