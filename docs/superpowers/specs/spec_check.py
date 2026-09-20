@@ -140,6 +140,24 @@ for i, l in enumerate(lines):
         if int(m.group(1)) not in stories:
             problems.append(f"S-{m.group(1)} cited at line {i + 1} but absent from the story breakdown")
 
+# --- 4g. every invariant is owned by exactly one story ---------------------
+owners = {}
+for l in lines:
+    m = STORY.match(l)
+    if not m:
+        continue
+    sid, ranges = m.group(1), list(re.finditer(r"INV-(\d+) to INV-(\d+)", l))
+    for rng in ranges:
+        for n in range(int(rng.group(1)), int(rng.group(2)) + 1):
+            owners.setdefault(n, []).append(sid)
+    for single in re.finditer(r"INV-(\d+)", re.sub(r"INV-\d+ to INV-\d+", "", l)):
+        owners.setdefault(int(single.group(1)), []).append(sid)
+control("story owns inv", lambda s: re.search(r"INV-(\d+)", s), "| S-14 | Purge (INV-9) |")
+for n in sorted(defined):
+    got = owners.get(n, [])
+    if len(got) != 1:
+        problems.append(f"INV-{n} is owned by {got or 'no story'}; exactly one story must own it")
+
 # --- 5. risk and spike ids referenced --------------------------------------
 for ident in set(re.findall(r"\b(?:SPIKE|R)-\d+\b", text)):
     if text.count(ident) < 2:

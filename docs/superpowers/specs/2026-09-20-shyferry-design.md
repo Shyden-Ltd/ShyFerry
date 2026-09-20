@@ -450,10 +450,11 @@ stopped being right.
 | INV-11 | No OAuth client identifier or secret is embedded in the distributed package (D4) | A test scans the built wheel and source distribution for anything matching either provider's credential format | Embed a client ID in the source; test must go red |
 | INV-9 | Nothing is recycled whose source has changed since it was transferred (R-04) | OneDrive: the recorded eTag is sent as `if-match`, so the server refuses a stale deletion with 412 and the check is atomic. Drive: `headRevisionId` is re-read and compared immediately before trashing, since Drive accepts no precondition (R-06) | Remove the `if-match` header from the Graph path and skip the `headRevisionId` comparison on the Drive path; the source-changed test must go red for each |
 
-Ownership: INV-1 to INV-6 and INV-9 belong to S-14, INV-7 to S-09, INV-8 and
-INV-10 to S-16, INV-11 to S-05, INV-12 to S-15, INV-13 to S-09, INV-14 to
-S-05, and INV-15 to S-10. An invariant with no owning story is an intention
-rather than a control.
+Each invariant's owning story is named once, in the story breakdown of
+section 15, and a check asserts that exactly one story owns each. Naming
+ownership here as well would be the same duplication that let section 10.3
+drift away from section 6.3. An invariant with no owning story is an
+intention rather than a control.
 
 INV-15 protects the destination from ShyFerry itself. A failed or mismatched
 upload leaves a bad file at the destination, and the obvious tidy-up is to
@@ -861,24 +862,28 @@ code.
 | S-02 | Core models and layered configuration |
 | S-03 | `StorageProvider` protocol, capabilities, entry-point registry, conformance suite exported as a pytest plugin, `local` provider |
 | S-04 | quickXorHash, oracled against live Graph values (no published vectors exist) |
-| S-05 | OAuth2 PKCE and device-code flows, keyring storage, single-flight refresh |
+| S-05 | OAuth2 PKCE and device-code flows, keyring storage, single-flight refresh, account-type gate (INV-11, INV-14) |
 | S-06 | Bring-your-own credential setup wizard and provider registration guides |
 | S-07 | Google Drive provider, personal accounts |
 | S-08 | OneDrive provider, personal accounts |
-| S-09 | Planner: enumeration, trashed-item exclusion, filters, naming, collisions |
-| S-10 | Transfer engine: streaming, chunking, concurrency, retry and backoff |
+| S-09 | Planner: enumeration, trashed-item and non-owned exclusion, filters, naming, collisions (INV-7, INV-13) |
+| S-10 | Transfer engine: streaming, chunking, concurrency, retry and backoff (INV-15) |
 | S-11 | Manifest and resume |
 | S-12 | Verification and hash negotiation, including the unverifiable state |
 | S-13 | Native document export policy and the `explain` command |
 | S-14 | Purge: both timings, INV-1 to INV-6 and INV-9, mutation proofs |
-| S-15 | Destination quota pre-flight |
-| S-16 | CLI surface, dry-run parity, JSON reporting, exit codes |
+| S-15 | Pre-flight: destination quota and nested-destination refusal (INV-12) |
+| S-16 | CLI surface, dry-run parity, JSON reporting, exit codes, redacting log formatter (INV-8, INV-10) |
 | S-17 | Documentation: README with limitations, SECURITY.md including the manifest's contents and location, CONTRIBUTING, CoC |
 | S-18 | Real-account journeys, release workflow, PyPI publication |
 | SPIKE-01 | Google native export above 10 MB |
 
 Build order is constrained by S-04: quickXorHash blocks any verified OneDrive
-transfer, and therefore blocks deletion entirely on that side.
+transfer, and therefore blocks deletion entirely on that side. S-04's own
+oracle is the live service, which needs enough of S-05 and S-08 to read one
+file's metadata - so the sequence is a minimal Graph read path, then the
+hash captured against it, then those values frozen as unit vectors that the
+rest of the work runs against offline.
 
 ---
 
