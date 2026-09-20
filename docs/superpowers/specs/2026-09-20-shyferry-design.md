@@ -568,7 +568,8 @@ shyferry auth setup <provider>      register credentials, guided
 shyferry auth login <provider>      run the OAuth flow (--as <alias>)
 shyferry auth status                accounts, aliases, scopes, token expiry,
                                     and the resolved config file path
-shyferry plan <src> <dst>           enumerate and report, change nothing
+shyferry plan <src> <dst>           exactly `run --dry-run`, reported for
+                                    a human to read
 shyferry run <src> <dst>            transfer, with --dry-run and --resume
 shyferry verify <run-id>            re-check a completed run
 shyferry purge-source <run-id>      recycle verified source files
@@ -601,6 +602,12 @@ success and exits 0, with every refusal itemised in the report: those
 refusals are the tool working, not failing. Exit 3 is for a gate that
 refused the whole operation. `--json` produces machine-readable output on
 every command that reports.
+
+`plan` is not a second implementation of anything. It is `run --dry-run`
+with a human-readable default output, on the one code path INV-6 requires,
+and it writes a manifest marked as a dry run so its plan can be reported,
+diffed and resumed from like any other. A CLI that offers two routes to one
+behaviour eventually grows two behaviours.
 
 Output conventions: machine-readable output goes to stdout and everything
 else to stderr, so `--json` stays parseable when piped. Progress rendering
