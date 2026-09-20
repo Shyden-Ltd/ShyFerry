@@ -353,6 +353,11 @@ Each invariant states its enforcement and the mutation that proves the
 enforcement is alive. A guard that has never been observed failing is not
 evidence of anything.
 
+Every entry in the mutation column changes the **implementation**, never the
+input. A test that merely exercises the hazard shows the behaviour is right
+today; only removing the control shows that the test would notice if it
+stopped being right.
+
 | ID | Invariant | Enforcement | Mutation |
 |---|---|---|---|
 | INV-1 | No destructive provider API is referenced anywhere in the source | A CI guard downloads Google's Drive v3 discovery document and Microsoft Graph's metadata, **derives** the set of operations whose own description contains permanent deletion, and asserts none appears in our source with comments stripped | Introduce a `files.delete` call; guard must go red |
@@ -363,10 +368,10 @@ evidence of anything.
 | INV-6 | Dry run and real run produce an identical plan and share one code path | Test compares plans; effects are gated at a single boundary | Diverge the dry-run path; test must go red |
 | INV-7 | Items already in the source's trash are never enumerated, transferred or counted | Planner query asserts `trashed=false` on Drive and the equivalent on Graph; integration test trashes a file and asserts it is absent from the plan | Remove the filter; test must go red |
 | INV-8 | ShyFerry contacts the configured providers and nothing else | A request recorder asserts every host contacted is one the active providers declare in their capabilities. The allowed set is **derived** from the loaded providers, never hand-listed. The test carries a liveness control: a deliberate request to a known host must be observed by the recorder in the same test, so a recorder that is not wired up fails rather than reporting an empty set | Add a call to an unrelated host; test must go red. Separately, detach the recorder; the liveness control must go red |
-| INV-12 | A transfer whose destination lies inside its own source, on the same account, is refused before any byte moves | Pre-flight compares account identity and tests path containment in both directions | Point a run at a destination nested within its source; pre-flight must refuse it |
+| INV-12 | A transfer whose destination lies inside its own source, on the same account, is refused before any byte moves | Pre-flight compares account identity and tests path containment in both directions | Remove the containment check from pre-flight; the nested-destination test must go red |
 | INV-10 | No credential material reaches logs, error output or reports | A redacting formatter is the only logging path. Tests push access tokens, client secrets and signed resumable-upload URLs through every reporting surface and assert none appears | Log a raw token; test must go red |
 | INV-11 | No OAuth client identifier or secret is embedded in the distributed package (D4) | A test scans the built wheel and source distribution for anything matching either provider's credential format | Embed a client ID in the source; test must go red |
-| INV-9 | Nothing is recycled whose source has changed since it was transferred (R-04) | OneDrive: the recorded eTag is sent as `if-match`, so the server refuses a stale deletion with 412 and the check is atomic. Drive: `headRevisionId` is re-read and compared immediately before trashing, since Drive accepts no precondition (R-06) | Edit a source file after transfer and before purge; purge must refuse it on both providers |
+| INV-9 | Nothing is recycled whose source has changed since it was transferred (R-04) | OneDrive: the recorded eTag is sent as `if-match`, so the server refuses a stale deletion with 412 and the check is atomic. Drive: `headRevisionId` is re-read and compared immediately before trashing, since Drive accepts no precondition (R-06) | Remove the `if-match` header from the Graph path and skip the `headRevisionId` comparison on the Drive path; the source-changed test must go red for each |
 
 Ownership: INV-1 to INV-6 and INV-9 belong to S-14, INV-7 to S-09, INV-8 and
 INV-10 to S-16, INV-11 to S-05, and INV-12 to S-15. An invariant with no
@@ -534,10 +539,20 @@ therefore cause a purge to do less, and can never cause it to do more.
 verified, and re-plans the remainder. An item that is verified but not yet
 recycled is not finished: under `--delete-after-each`, an interruption
 between verification and deletion leaves work outstanding, and resume
-completes the deletion rather than skipping the item as done. Interrupted resumable upload sessions are restarted
-from the last confirmed chunk boundary where the provider permits it, and
-from the beginning of that file where it does not. Provider upload sessions
-expire; an expired session is a normal condition and is re-established.
+completes the deletion rather than skipping the item as done. Resumption is asymmetric, deliberately. An interrupted upload continues from
+the last chunk the destination confirmed, where the provider permits it. The
+**source is always re-read from the beginning**, because verification hashes
+the whole file in flight (section 5.2) and a hash computed over the tail of
+a file is not a hash of that file. Seeking the source instead would save
+reading bytes that are comparatively cheap, and would forfeit the
+verification that licenses deletion. On the asymmetric connections most
+people have, the upload is the bottleneck, so resuming the upload while
+re-reading the source recovers nearly all of the cost. This is also why
+`open_read` needs no range parameter: nothing in ShyFerry ever reads part of
+a file.
+
+Provider upload sessions expire; an expired session is a normal condition
+and is re-established.
 
 ---
 
@@ -683,7 +698,7 @@ code.
 |---|---|
 | S-01 | Repository bootstrap: uv, ruff, mypy, pytest, CI matrix, Dependabot, branch protection, licence, project CLAUDE.md |
 | S-02 | Core models and layered configuration |
-| S-03 | `StorageProvider` protocol, capabilities, conformance suite, `local` provider |
+| S-03 | `StorageProvider` protocol, capabilities, entry-point registry, conformance suite exported as a pytest plugin, `local` provider |
 | S-04 | quickXorHash, oracled against live Graph values (no published vectors exist) |
 | S-05 | OAuth2 PKCE and device-code flows, keyring storage, single-flight refresh |
 | S-06 | Bring-your-own credential setup wizard and provider registration guides |
