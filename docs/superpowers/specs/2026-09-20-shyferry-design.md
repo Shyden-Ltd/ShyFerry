@@ -111,6 +111,7 @@ shyferry/
     manifest.py     append-only JSONL journal, resume support
     config.py       layered configuration and validation
     naming.py       filename sanitisation and portability rules
+    logging.py      the redacting formatter, the only logging path (INV-10)
     errors.py       exception hierarchy
   providers/
     local/          filesystem provider
