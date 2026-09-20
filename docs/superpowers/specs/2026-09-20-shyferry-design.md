@@ -268,6 +268,13 @@ other side's bytes were hashed with; the destination reports no hash at all;
 the content was converted in transit (section 7), so source and destination
 bytes legitimately differ; or the item could not be exported at all.
 
+Empty files are the awkward boundary case: providers vary in whether they
+report a hash for zero bytes at all. A zero-byte file whose destination
+reports no hash is unverifiable by the rule above, and therefore not
+deletable, which would be a surprising outcome for the simplest possible
+file. The conformance suite covers empty files explicitly on every provider
+so the behaviour is known rather than discovered.
+
 **Unverifiable is not a failure.** The transfer is reported as completed, and
 the item is recorded as present at the destination. What it forfeits is
 eligibility for deletion, permanently and without an override.
@@ -356,13 +363,19 @@ evidence of anything.
 | INV-6 | Dry run and real run produce an identical plan and share one code path | Test compares plans; effects are gated at a single boundary | Diverge the dry-run path; test must go red |
 | INV-7 | Items already in the source's trash are never enumerated, transferred or counted | Planner query asserts `trashed=false` on Drive and the equivalent on Graph; integration test trashes a file and asserts it is absent from the plan | Remove the filter; test must go red |
 | INV-8 | ShyFerry contacts the configured providers and nothing else | A request recorder asserts every host contacted is one the active providers declare in their capabilities. The allowed set is **derived** from the loaded providers, never hand-listed. The test carries a liveness control: a deliberate request to a known host must be observed by the recorder in the same test, so a recorder that is not wired up fails rather than reporting an empty set | Add a call to an unrelated host; test must go red. Separately, detach the recorder; the liveness control must go red |
+| INV-12 | A transfer whose destination lies inside its own source, on the same account, is refused before any byte moves | Pre-flight compares account identity and tests path containment in both directions | Point a run at a destination nested within its source; pre-flight must refuse it |
 | INV-10 | No credential material reaches logs, error output or reports | A redacting formatter is the only logging path. Tests push access tokens, client secrets and signed resumable-upload URLs through every reporting surface and assert none appears | Log a raw token; test must go red |
 | INV-11 | No OAuth client identifier or secret is embedded in the distributed package (D4) | A test scans the built wheel and source distribution for anything matching either provider's credential format | Embed a client ID in the source; test must go red |
 | INV-9 | Nothing is recycled whose source has changed since it was transferred (R-04) | OneDrive: the recorded eTag is sent as `if-match`, so the server refuses a stale deletion with 412 and the check is atomic. Drive: `headRevisionId` is re-read and compared immediately before trashing, since Drive accepts no precondition (R-06) | Edit a source file after transfer and before purge; purge must refuse it on both providers |
 
 Ownership: INV-1 to INV-6 and INV-9 belong to S-14, INV-7 to S-09, INV-8 and
-INV-10 to S-16, and INV-11 to S-05. An invariant with no owning story is an
-intention rather than a control.
+INV-10 to S-16, INV-11 to S-05, and INV-12 to S-15. An invariant with no
+owning story is an intention rather than a control.
+
+INV-12 exists because a transfer that writes inside the tree it is reading
+grows without limit: each file copied becomes a new file to copy. It is the
+same defect as copying a directory into itself, and on metered cloud storage
+it is considerably more expensive.
 
 The derived deny-list in INV-1 is deliberate. A hand-written list of banned
 method names would not have caught `files.emptyTrash`, which was missed in
@@ -447,6 +460,8 @@ shyferry verify <run-id>            re-check a completed run
 shyferry purge-source <run-id>      recycle verified source files
 shyferry explain native-files       the table in section 7
 shyferry report <run-id>            human or JSON output
+shyferry runs list                  past runs and their outcomes
+shyferry runs prune                 discard manifests past the retention window
 ```
 
 Exit codes are meaningful and documented: 0 success, 1 partial with
@@ -470,6 +485,18 @@ is recorded; it never fails the whole run. Graph 429 responses honour
 `Retry-After`. Drive rate-limit responses use exponential backoff with
 jitter. Retry budgets are per item and per run, both configurable.
 
+Three conditions are not retryable and are handled as expected events rather
+than as crashes. **Revoked authorisation** mid-run - the user withdrew
+consent, or an administrator did - stops the run cleanly with a message
+naming the re-authentication command, and the manifest is left resumable.
+**A source item that has vanished** between planning and transfer is
+recorded as `vanished` and reported, never as a failure: the user deleted
+their own file, and treating that as an error trains people to ignore the
+error count. **An interrupt** flushes the manifest, abandons the in-flight
+chunk and exits with a resumable state, so that the difference between a
+clean exit and a hard kill is one chunk of repeated work rather than a
+corrupt journal.
+
 ### 10.2 Token refresh
 
 Access tokens are refreshed through a single-flight lock: concurrent workers
@@ -485,7 +512,7 @@ messages, not stack traces.
 
 An append-only JSONL journal per run, at the platform state directory, one
 record per state transition: `planned`, `transferred`, `verified`,
-`unverifiable`, `failed`, `skipped`, `recycled`.
+`unverifiable`, `failed`, `skipped`, `vanished`, `recycled`.
 
 A manifest is an inventory of the user's entire file tree in plain text:
 names, paths, sizes and hashes. That is sensitive on its own, independently

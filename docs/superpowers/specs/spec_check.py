@@ -113,6 +113,23 @@ for i, l in enumerate(lines + [""]):
             problems.append(f"table starting line {start} has ragged rows: widths {sorted(widths)}")
         block = []
 
+# --- 4e. every command mentioned anywhere is in the documented CLI surface --
+CMD = re.compile(r"`?shyferry ([a-z][a-z-]*)")
+control("command mention", CMD.search, "run `shyferry purge-source 1` now")
+surface, in_block, mentioned = set(), False, {}
+for i, l in enumerate(lines):
+    if l.startswith("shyferry "):          # the fenced CLI surface block
+        surface.add(l.split()[1])
+        in_block = True
+        continue
+    for m in CMD.finditer(l):
+        mentioned.setdefault(m.group(1), []).append(i + 1)
+if not surface:
+    problems.append("CONTROL FAILED: no CLI surface block found to check against")
+for cmd, where in sorted(mentioned.items()):
+    if cmd not in surface:
+        problems.append(f"command 'shyferry {cmd}' used at line(s) {where} is absent from the CLI surface")
+
 # --- 5. risk and spike ids referenced --------------------------------------
 for ident in set(re.findall(r"\b(?:SPIKE|R)-\d+\b", text)):
     if text.count(ident) < 2:
