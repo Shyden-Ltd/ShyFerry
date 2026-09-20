@@ -95,7 +95,8 @@ Enterprise subscribers and members of qualifying programmes.
 ```
 shyferry/
   core/
-    models.py       RemoteItem, TransferPlan, ManifestRecord, Verification
+    models.py       RemoteItem, UploadTarget, TransferPlan, ManifestRecord,
+                    Verification, Quota, AccountInfo
     provider.py     StorageProvider protocol and ProviderCapabilities
     registry.py     entry-point discovery of providers
     planner.py      enumeration, filtering, naming, collision resolution
@@ -135,14 +136,34 @@ class StorageProvider(Protocol):
 
     def account_info(self) -> AccountInfo: ...
     def quota(self) -> Quota: ...
-    def iter_items(self, root: str, *, recursive: bool) -> Iterator[RemoteItem]: ...
+    def iter_items(self, root: PurePosixPath, *, recursive: bool) -> Iterator[RemoteItem]: ...
     def open_read(self, item: RemoteItem) -> ContextManager[BinaryIO]: ...
     def export(self, item: RemoteItem, target_mime: str) -> ContextManager[BinaryIO]: ...
-    def ensure_folder(self, path: PurePosixPath) -> str: ...
+    def ensure_folder(self, path: PurePosixPath) -> RemoteItem: ...
     def upload(self, stream: BinaryIO, dest: UploadTarget) -> RemoteItem: ...
-    def stat(self, path_or_id: str) -> RemoteItem | None: ...
-    def recycle(self, item: RemoteItem) -> None: ...
+    def stat(self, path: PurePosixPath) -> RemoteItem | None: ...
+    def recycle(self, item: RemoteItem, *, expected_revision: str) -> None: ...
 ```
+
+`RemoteItem` carries the provider's own identifier, the path, size, modified
+time, the hashes the provider reports, the MIME type, whether the item is a
+folder or a native document, and a **revision token**: an opaque,
+provider-defined string that changes whenever the item's content changes.
+That is Graph's eTag and Drive's `headRevisionId`. The token is captured at
+transfer time, persisted in the manifest, and handed back to `recycle` as
+`expected_revision`.
+
+That keyword argument is not decoration. `recycle` must compare the
+**recorded** revision, and an implementation that simply stats the item and
+compares the result with itself would satisfy the signature, satisfy INV-9's
+description, and check nothing whatsoever. Requiring the caller to supply the
+transfer-time value makes that mistake impossible to write by accident: the
+provider has no other way to obtain it.
+
+`UploadTarget` carries the destination path, the declared byte length, the
+modified time to preserve, and the collision policy for this item. Paths are
+`PurePosixPath` throughout the protocol, including on Windows, because the
+subject is a remote namespace and not the local filesystem.
 
 `ProviderCapabilities` declares what the planner must adapt to: the hash
 algorithms the provider reports, maximum file size, maximum path length,
@@ -525,7 +546,10 @@ messages, not stack traces.
 
 An append-only JSONL journal per run, at the platform state directory, one
 record per state transition: `planned`, `transferred`, `verified`,
-`unverifiable`, `failed`, `skipped`, `vanished`, `recycled`.
+`unverifiable`, `failed`, `skipped`, `vanished`, `recycled`. Each record
+carries the source and destination identifiers, the size, the hashes
+computed and reported, and the **source revision token** captured at
+transfer time, without which INV-9 cannot be evaluated at purge time.
 
 A manifest is an inventory of the user's entire file tree in plain text:
 names, paths, sizes and hashes. That is sensitive on its own, independently
